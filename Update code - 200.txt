@@ -1,4 +1,4 @@
-﻿ClipboardChanged(type) {
+ClipboardChanged(type) {
     Global SQLiteDB, DBPath, IsCopying, ClipboardLock, ProcessingContext, TransactionActive, TransactionOwner, G_last_insert_rowid, G_last_insert_Main_ID, G_last_insert_Main_TableName
 	; 🔥 添加这个检查 - 任何非零的 ClipboardLock 都应该阻止执行
     if (ClipboardLock != 0) {
