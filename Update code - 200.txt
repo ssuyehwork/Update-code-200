@@ -17,19 +17,19 @@ ClipboardChanged(type) {
     ProcessingContext := "Clipboard"
     FinalID := ""
     try {
-        if (!CheckDBUnlocked(DBPath)) {
-            MsgBox, 16, 错误, 错误 ID：4100220 ; 数据库被锁定！
+        ; 🔥 使用统一的数据库初始化方法
+        if (!InitDB(DBPath)) {
             LoadData()
             Return
         }
-        if (!SQLiteDB) {
-            SQLiteDB := New SQLiteDB()
-            if (!SQLiteDB.OpenDB(DBPath)) {
-                ErrorMsg := SQLiteDB._ErrMsg()
-                MsgBox, 16, 错误, 错误 ID：4103692 数据库打开失败: %ErrorMsg%
-                LoadData()
-                Return
-            }
+        
+        ; 🔥 测试数据库是否可写（防止被占用）
+        TestWriteSQL := "CREATE TEMP TABLE IF NOT EXISTS _test_write (id INTEGER); DROP TABLE IF EXISTS _test_write;"
+        if (!SQLiteDB.Exec(TestWriteSQL)) {
+            ErrorMsg := SQLiteDB._ErrMsg()
+            MsgBox, 16, 错误, 错误 ID：4103698 数据库被占用或无写入权限`n`n错误: %ErrorMsg%`n路径: %DBPath%
+            LoadData()
+            Return
         }
 		
         ; 根据剪贴板内容动态决定主表名称
@@ -240,8 +240,11 @@ ClipboardChanged(type) {
             isFolderMode := InStr(FileAttrib, "D")
           
             SplitPath, Path, FileName, FileDir, FileExt, FileNameNoExt
-            SplitPath, FileDir, , , , ParentDir
-            Group := FileDir ? ParentDir : ""
+            GroupName := ""
+            if (FileDir) {
+                SplitPath, FileDir, GroupName
+            }
+            Group := GroupName
           
             if (isFolderMode) {
                 Loop, % AllPaths.MaxIndex() {
@@ -256,13 +259,13 @@ ClipboardChanged(type) {
                     FirstLevelFiles := []
                     
                     ; 先收集子文件夹
-                    Loop, Files, %CurrentPath%\*.*, D
+                    Loop, Files, %CurrentPath%\\*.*, D
                     {
                         FirstLevelFolders.Push(A_LoopFileFullPath)
                     }
                     
                     ; 再收集直接文件
-                    Loop, Files, %CurrentPath%\*.*, F
+                    Loop, Files, %CurrentPath%\\*.*, F
                     {
                         FirstLevelFiles.Push(A_LoopFileFullPath)
                     }
@@ -276,20 +279,20 @@ ClipboardChanged(type) {
                         LocalFilePathsList := ""
                         
                         ; 收集子文件夹的第一层内容
-                        Loop, Files, %SubFolderPath%\*.*, D
+                        Loop, Files, %SubFolderPath%\\*.*, D
                         {
                             LocalFilePathsList .= A_LoopFileFullPath . "`n"
                             LocalValidCount++
                             
                             ; 递归计算大小
-                            Loop, Files, %A_LoopFileFullPath%\*.*, FR
+                            Loop, Files, %A_LoopFileFullPath%\\*.*, FR
                             {
                                 FileGetSize, FileSize, %A_LoopFileFullPath%, B
                                 LocalTotalSize += FileSize
                             }
                         }
                         
-                        Loop, Files, %SubFolderPath%\*.*, F
+                        Loop, Files, %SubFolderPath%\\*.*, F
                         {
                             LocalFilePathsList .= A_LoopFileFullPath . "`n"
                             LocalValidCount++
@@ -392,15 +395,52 @@ ClipboardChanged(type) {
                 ValidCount := 0
                 TotalSize := 0
                 FilePathsList := ""
+                
+                UniqueIdentifiers := {}
+                UniqueExts := {}
+
                 Loop, % AllPaths.MaxIndex() {
                     CurrentPath := AllPaths[A_Index]
                     FilePathsList .= CurrentPath . "`n"
                     FileGetSize, FileSize, %CurrentPath%, B
                     TotalSize += FileSize
                     ValidCount++
+                    
+                    SplitPath, CurrentPath, , , FileExt
+                    
+                    Symbol := GetFileTypeSymbol(CurrentPath, FileExt)
+                    if (Symbol != "") {
+                        SymbolsList := StrSplit(Symbol, ",")
+                        for _, s in SymbolsList {
+                            UniqueIdentifiers[s] := 1
+                        }
+                    }
+                    if (FileExt != "") {
+                        UniqueExts[FileExt] := 1
+                    }
                 }
                 FilePathsList := RTrim(FilePathsList, "`n")
                 ClipData := FilePathsList
+
+                IdentifierStr := ""
+                for k, v in UniqueIdentifiers {
+                    IdentifierStr .= k . ","
+                }
+                Identifier := RTrim(IdentifierStr, ",")
+
+                Format := "CF_HDROP"
+                if (Identifier != "") {
+                    Format .= "," . Identifier
+                }
+                ExtStr := ""
+                for k, v in UniqueExts {
+                    ExtStr .= k . ","
+                }
+                ExtStr := RTrim(ExtStr, ",")
+
+                if (ExtStr != "") {
+                    Format .= "," . ExtStr
+                }
               
                 SizeStr := ""
                 if (TotalSize > 0) {
@@ -414,12 +454,9 @@ ClipboardChanged(type) {
                         SizeStr := Round(TotalSize / (1024 * 1024 * 1024),2) . " GB"
                 }
               
-                ; 使用 GetFileTypeSymbol 函数获取标识符
-                Identifier := GetFileTypeSymbol(Path, FileExt)
-                Format := "CF_HDROP," . Identifier
-                if (FileExt != "") {
-                    Format .= "," . FileExt
-                }
+                Path := AllPaths[1] ; For remark only
+                SplitPath, Path, FileName, , , FileNameNoExt
+
                 TempRemark := "Copied File - " . FileNameNoExt . " | 数量: " . FileCount . " | 有效: " . ValidCount . " | 大小: " . SizeStr
                 Content := TempRemark
                 Remark := FileName
@@ -470,7 +507,7 @@ ClipboardChanged(type) {
                         FileAttrib := FileExist(Path)
                         FileCount++
                         if (InStr(FileAttrib, "D")) {
-                            Loop, Files, %Path%\*.*, F
+                            Loop, Files, %Path%\\*.*, F
                             {
                                 if (FileExist(A_LoopFileFullPath)) {
                                     ValidCount++
@@ -496,8 +533,11 @@ ClipboardChanged(type) {
                     else
                         SizeStr := Round(TotalSize / (1024 * 1024 * 1024),2) . " GB"
                 }
-                SplitPath, FileDir, , , , ParentDir
-                Group := FileDir ? ParentDir : ""
+                GroupName := ""
+                if (FileDir) {
+                    SplitPath, FileDir, GroupName
+                }
+                Group := GroupName
                 if (InStr(FirstAttrib, "D")) {
                     TempRemark := "Copied Folder Path - " . FileNameNoExt . " | 数量: " . FileCount . " | 有效: " . ValidCount . " | 大小: " . SizeStr
                 } else {
@@ -574,14 +614,22 @@ ClipboardChanged(type) {
         HashValue := ""
         try {
             if (ClipData != "") {
-                HashValue := Crypt.Hash.Str(ClipData, "SHA256")
+                ; 🔥 添加数据长度检查，避免处理过大数据
+                ClipDataLen := StrLen(ClipData)
+                if (ClipDataLen > 10000000) {
+                    ; 超过10MB的数据，使用截断后的内容计算哈希
+                    TruncatedData := SubStr(ClipData, 1, 10000000)
+                    HashValue := Crypt.Hash.Str(TruncatedData, "SHA256") . "_TRUNCATED"
+                } else {
+                    HashValue := Crypt.Hash.Str(ClipData, "SHA256")
+                }
             }
         } catch e {
             eMessage := e.Message
-            RollbackSafeTransaction("ClipboardChanged")
-            MsgBox, 16, 错误, 错误 ID：5334156 计算哈希值失败: %eMessage%
-            LoadData()
-            Return
+            ; 🔥 哈希计算失败时使用备用方案
+            HashValue := "HASH_FAILED_" . A_TickCount . "_" . StrLen(ClipData)
+            ; 不回滚事务，继续执行
+            ; MsgBox, 16, 警告, 错误 ID：5334156 计算哈希值失败: %eMessage%，使用备用哈希值
         }
         ; === 使用分类字典_One表维护排序最大值（带唯一性处理）===
         GetMaxSortSQL := "SELECT COALESCE(""Record_Value"", 0) FROM ""分类字典_One"" WHERE ""Category_Main"" = '排序值' AND ""Category_Sub"" = '最大值' LIMIT 1;"
@@ -865,9 +913,87 @@ ClipboardChanged(type) {
             G_last_insert_Main_TableName := MainTable
         }
         
-        ; 🔥 属性插入部分 - 开始（将 类型、分组、应用名称、标识 插入到关联属性表）
+        ; 🔥 属性插入部分 - 开始（将 类型、分组、应用名称、标识 插入到关联属性表） - 已修复文件名提取与 AppName 过滤
         Attributes := []
         Attributes.Push({Format: "星级", Value: "0"})
+        
+        ; 🔥 重构：统一处理文件、多文件和文件夹的名称与关键字提取
+        if (InStr(Format, "CF_HDROP")) {
+            if (isFolderMode) {
+                ; --- 文件夹模式 ---
+                FolderFullPath := Remark ; Remark 变量在文件夹模式下存储了当前处理的文件夹的完整路径
+                if (FolderFullPath != "" && InStr(FileExist(FolderFullPath), "D")) {
+                    SplitPath, FolderFullPath, FolderName
+                    
+                    ; 1. 添加文件夹本身的名称作为 "文件名称" 和 "关键字"
+                    if (FolderName != "") {
+                        Attributes.Push({Format: "文件名称", Value: FolderName})
+                        Attributes.Push({Format: "关键字", Value: FolderName})
+                    }
+
+                    ; 2. 遍历所有子文件，添加无扩展名的文件名作为关键字
+                    Loop, Files, %FolderFullPath%\\*.*, F
+                    {
+                        SplitPath, A_LoopFileName, , , , FileNameNoExt
+                        if (FileNameNoExt != "" && FileNameNoExt != A_LoopFileName) {
+                            Attributes.Push({Format: "关键字", Value: FileNameNoExt})
+                        }
+                    }
+                }
+            } else {
+                ; --- 文件模式（单个或多个）---
+                if (AllPaths.MaxIndex() > 0) {
+                    Loop, % AllPaths.MaxIndex() {
+                        CurrentPath := AllPaths[A_Index]
+                        SplitPath, CurrentPath, FileName, , , FileNameNoExt
+                        
+                        if (FileName != "") {
+                            Attributes.Push({Format: "文件名称", Value: FileName})
+                        }
+                        if (FileNameNoExt != "") {
+                            Attributes.Push({Format: "关键字", Value: FileNameNoExt})
+                        }
+                    }
+                }
+            }
+        } else {
+             ; --- 非 CF_HDROP 但可能是路径文本的情况 ---
+            ExtractedFileName := ""
+            ExtractedNameNoExt := ""
+            if (Remark != "") {
+                FirstPath := Remark
+                if (InStr(Remark, "`n")) {
+                    tmp := StrSplit(Remark, "`n")
+                    FirstPath := Trim(tmp[1])
+                } else if (InStr(Remark, "`r")) {
+                    tmp := StrSplit(Remark, "`r")
+                    FirstPath := Trim(tmp[1])
+                } else {
+                    FirstPath := Trim(Remark)
+                }
+                
+                if (InStr(FirstPath, "\\") || InStr(FirstPath, "/")) {
+                    SplitPath, FirstPath, TmpFileName, , , TmpFileNameNoExt
+                    ExtractedFileName := TmpFileName
+                    ExtractedNameNoExt := TmpFileNameNoExt
+                } else {
+                    ExtractedFileName := FirstPath
+                    if RegExMatch(FirstPath, "^(.*)\\.([^.]+)$", m) {
+                        ExtractedNameNoExt := m1
+                    } else {
+                        ExtractedNameNoExt := FirstPath
+                    }
+                }
+            }
+            if (ExtractedFileName != "") {
+                Attributes.Push({Format: "文件名称", Value: ExtractedFileName})
+                if (ExtractedNameNoExt != "") {
+                    Attributes.Push({Format: "关键字", Value: ExtractedNameNoExt})
+                } else {
+                    Attributes.Push({Format: "关键字", Value: ExtractedFileName})
+                }
+            }
+        }
         
         ; 将类型字段拆分后插入到关联属性表
         if (Format != "") {
@@ -884,7 +1010,13 @@ ClipboardChanged(type) {
         
         ; 将标识符也插入到关联属性表
         if (Identifier != "") {
-            Attributes.Push({Format: "标识", Value: Identifier})
+            IdentifierParts := StrSplit(Identifier, ",")
+            Loop, % IdentifierParts.Length() {
+                IDValue := Trim(IdentifierParts[A_Index])
+                if (IDValue != "") {
+                    Attributes.Push({Format: "标识", Value: IDValue})
+                }
+            }
         }
         
         ; 如果是网址，添加特定关键字
@@ -905,28 +1037,47 @@ ClipboardChanged(type) {
             Attributes.Push({Format: "分组", Value: Group})
         }
         
-        ; 将应用名称插入到关联属性表
+        ; 将应用名称插入到关联属性表（但避免把短版本号/短标识如 "V5" 当作应用名称或关键字）
         if (AppName != "" && AppName != "未知应用") {
-            Attributes.Push({Format: "应用名称", Value: AppName})
-            IsFolderPath := (RegExMatch(AppName, "^[A-Za-z]:\\.*$") && InStr(FileExist(AppName), "D"))
-            if (!IsFolderPath) {
+            ; 仅当 AppName 不是短的版本号/短标识时，才插入为 “应用名称”
+            if !(RegExMatch(AppName, "^(v|V)?\\d+(\\.\\d+)*$") || StrLen(AppName) <= 3) {
+                Attributes.Push({Format: "应用名称", Value: AppName})
+            }
+            IsFolderPath := (RegExMatch(AppName, "^[A-Za-z]:\\\\.*$") && InStr(FileExist(AppName), "D"))
+            if (IsFolderPath) {
+                SplitPath, AppName, FolderName
+                if (FolderName != "") {
+                    Attributes.Push({Format: "关键字", Value: FolderName})
+                }
+            } else {
                 Tags := []
-                if (RegExMatch(AppName, "^(.+)\s*-\s*(.+)$", Match)) {
+                if (RegExMatch(AppName, "^(.+)\\s*-\\s*(.+)$", Match)) {
                     FirstPart := Trim(Match1)
                     SecondPart := Trim(Match2)
-                    if (!RegExMatch(FirstPart, "\.[a-zA-Z0-9]{1,4}$")) {
-                        Tags.Push(FirstPart)
-                    }
-                    if (SecondPart = "Google Chrome") {
-                        Tags.Push("Chrome")
+                    ; 过滤掉像 V5、v1.2、1.0 等版本号/短标识 (长度<=3 或 纯数字/版本号格式)
+                    if !(RegExMatch(SecondPart, "^(v|V)?\\d+(\\.\\d+)*$") || StrLen(SecondPart) <= 3) {
+                        if (!RegExMatch(FirstPart, "\\.[a-zA-Z0-9]{1,4}$")) {
+                            Tags.Push(FirstPart)
+                        }
+                        if (SecondPart = "Google Chrome") {
+                            Tags.Push("Chrome")
+                        } else {
+                            Tags.Push(SecondPart)
+                        }
                     } else {
-                        Tags.Push(SecondPart)
+                        ; 若第二部分被认为是版本号/短标识，则只使用第一部分（如果合理）
+                        if (!RegExMatch(FirstPart, "\\.[a-zA-Z0-9]{1,4}$")) {
+                            Tags.Push(FirstPart)
+                        }
                     }
                 } else {
                     if (AppName = "Google Chrome") {
                         Tags.Push("Chrome")
                     } else {
-                        Tags.Push(AppName)
+                        ; 仅当 AppName 自身不是短版标识时才作为关键字
+                        if !(RegExMatch(AppName, "^(v|V)?\\d+(\\.\\d+)*$") || StrLen(AppName) <= 3) {
+                            Tags.Push(AppName)
+                        }
                     }
                 }
                 for index, Tag in Tags {
@@ -965,57 +1116,39 @@ ClipboardChanged(type) {
             ClipboardLock := 0
             PostMessage, 0x0400 + 1, 0, 0, , ahk_class AutoHotkey
         }
-		
-		SyncDatabaseWithFileSystem()
         LoadData()
 		GetGlobalMaxSortValue()
-		
     }
     Return
 }
 
 GetFileTypeSymbol(filePath, fileExt) {
     if (InStr(FileExist(filePath), "D")) {
-        return "📁"
+        Return "📁"
     }
-
-    ; 分类数组，严格按扩展名匹配
-    lossyMusicExts := ["mp3","aac","m4a","ogg"]
-    losslessMusicExts := ["flac","alac","ape"]
-    uncompressedMusicExts := ["wav","aiff"]
-    specialMusicExts := ["dsf","dff","mid"]
-    videoExts := ["mp4","avi","mkv","wmv","flv","mov"]
-    imageExts := ["jpg","jpeg","png","gif","bmp","tiff","psd","ai","svg","eps","cdr","heic","webp","avif","ico","raw","nef","cr2","arw","tga","dds"]
-    docExts := ["doc","docx","pdf","txt","rtf"]
-
-    ; 统一转小写，避免大小写误判
-    fileExt := StrLower(fileExt)
-
-    ; 定义一个检查函数，保证完整匹配
-    CheckExt(extList, fileExt) {
-        for _, ext in extList
-            if (ext = fileExt)
-                return true
-        return false
-    }
-
-    ; 分类判断
-    if (CheckExt(lossyMusicExts, fileExt))
-        return "🎧,♫"
-    else if (CheckExt(losslessMusicExts, fileExt) || (fileExt = "m4a" && InStr(filePath, "ALAC")))
-        return "🎼,♫"
-    else if (CheckExt(uncompressedMusicExts, fileExt))
-        return "📀,♫"
-    else if (CheckExt(specialMusicExts, fileExt))
-        return "🎶,♫"
-    else if (CheckExt(videoExts, fileExt))
-        return "🎥"
-    else if (CheckExt(imageExts, fileExt))
-        return "🖼️"
-    else if (CheckExt(docExts, fileExt))
-        return "📎"
+    lossyMusicExts := "mp3,aac,m4a,ogg"
+    losslessMusicExts := "flac,alac,ape"
+    uncompressedMusicExts := "wav,aiff"
+    specialMusicExts := "dsf,dff,mid"
+    videoExts := "mp4,avi,mkv,wmv,flv,mov"
+    imageExts := "jpg,jpeg,png,gif,bmp,tiff"
+    docExts := "doc,docx,pdf,txt,rtf"
+    if (InStr(lossyMusicExts, fileExt))
+        Return "🎧,♫"
+    else if (InStr(losslessMusicExts, fileExt) || (fileExt = "m4a" && InStr(filePath, "ALAC")))
+        Return "🎼,♫"
+    else if (InStr(uncompressedMusicExts, fileExt))
+        Return "📀,♫"
+    else if (InStr(specialMusicExts, fileExt))
+        Return "🎶,♫"
+    else if (InStr(videoExts, fileExt))
+        Return "🎥"
+    else if (InStr(imageExts, fileExt))
+        Return "🖼️"
+    else if (InStr(docExts, fileExt))
+        Return "📎"
     else
-        return "📎"
+        Return "📎"
 }
 
 InsertAttribute(TableName, DataID, AttrFormat, AttrValue, DataFormat := "") {
