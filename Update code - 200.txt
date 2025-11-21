@@ -1,3 +1,4 @@
+; 一 旧版本
 ClipboardChanged(type) {
     Global SQLiteDB, DBPath, IsCopying, ClipboardLock, ProcessingContext, TransactionActive, TransactionOwner, G_last_insert_rowid, G_last_insert_Main_ID, G_last_insert_Main_TableName
 	; 🔥 添加这个检查 - 任何非零的 ClipboardLock 都应该阻止执行
@@ -1484,4 +1485,517 @@ RollbackSafeTransaction(context) {
     TransactionOwner := ""
     ; AddDebugLog("事务回滚完成，重置标志")
     Return true
+}
+
+;===================|===================
+
+; 二 新版本
+; 1. 主函数
+ClipboardChanged(type) {
+    Global SQLiteDB, DBPath, IsCopying, ClipboardLock, ProcessingContext, TransactionActive, TransactionOwner
+    Global G_last_insert_rowid, G_last_insert_Main_ID, G_last_insert_Main_TableName, g_CurrentRecord
+    
+    ; 🔒 检查锁定状态
+    if (ClipboardLock != 0) {
+        Return
+    }
+  
+    ; 🪟 获取窗口信息
+    WinGet, ActiveID, ID, A
+    WinGetTitle, WindowTitle, ahk_id %ActiveID%
+    if (InStr(WindowTitle, "印象记忆_5")) {
+        Return
+    }
+    if (type != 1 && type != 2) {
+        Return
+    }
+    
+    ; 🔐 设置锁定
+    ClipboardLock := 3
+    ProcessingContext := "Clipboard"
+    FinalID := ""
+    MainTable := ""
+    
+    try {
+        ; 📊 初始化数据库
+        if (!InitDB(DBPath)) {
+            LoadData()
+            Return
+        }
+        
+        ; ✅ 测试数据库是否可写
+        TestWriteSQL := "CREATE TEMP TABLE IF NOT EXISTS _test_write (id INTEGER); DROP TABLE IF EXISTS _test_write;"
+        if (!SQLiteDB.Exec(TestWriteSQL)) {
+            ErrorMsg := SQLiteDB._ErrMsg()
+            MsgBox, 16, 错误, 错误 ID：4103698 数据库被占用或无写入权限`n`n错误: %ErrorMsg%`n路径: %DBPath%
+            LoadData()
+            Return
+        }
+        
+        ; 🎯 根据剪贴板内容动态决定主表名称
+        isFileSystemContent := false
+        if (DllCall("IsClipboardFormatAvailable", "UInt", 15)) { ; CF_HDROP
+            isFileSystemContent := true
+        } else {
+            TempClipData := Clipboard
+            TempClipData := Trim(RegExReplace(TempClipData, "[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", ""))
+            if (TempClipData != "") {
+                lines := StrSplit(TempClipData, "`n")
+                FirstLine := Trim(lines[1])
+                if (RegExMatch(FirstLine, "^[A-Za-z]:\\.*$") || RegExMatch(FirstLine, "^\\\\.*$")) {
+                    isFileSystemContent := true
+                }
+            }
+        }
+
+        if (isFileSystemContent) {
+            MainTable := "Database"
+        } else {
+            MainTable := "历史数据"
+        }
+        
+        DataTable := "Data_" . MainTable
+        
+        ; 🔧 验证和恢复表结构
+        if (!ValidateAndRestoreTables(MainTable, DataTable)) {
+            LoadData()
+            Return
+        }
+        
+        ; ✔️ 验证必需字段
+        if (!ValidateTableFields(MainTable)) {
+            LoadData()
+            Return
+        }
+        
+        Sleep, 100
+        
+        ; 🚀 开始事务
+        if (!BeginSafeTransaction("ClipboardChanged")) {
+            MsgBox, 16, 错误, 错误 ID：1938940 开始事务失败！
+            LoadData()
+            Return
+        }
+        
+        ; 📋 处理剪贴板内容（调度到对应处理函数）
+        if (DllCall("IsClipboardFormatAvailable", "UInt", 15)) {
+            ; CF_HDROP - 文件/文件夹
+            FinalID := ProcessFileClipboard(MainTable, DataTable, WindowTitle)
+        } else {
+            ; CF_UNICODETEXT - 文本
+            FinalID := ProcessTextClipboard(MainTable, DataTable, WindowTitle)
+        }
+        
+        ; ❌ 检查处理结果
+        if (FinalID = "" || FinalID <= 0) {
+            RollbackSafeTransaction("ClipboardChanged")
+            LoadData()
+            Return
+        }
+        
+        ; 💾 更新最后插入ID记录
+        UpdateLastInsertID(FinalID)
+        
+        ; ✅ 提交事务
+        if (!CommitSafeTransaction("ClipboardChanged")) {
+            RollbackSafeTransaction("ClipboardChanged")
+            MsgBox, 16, 错误, 错误 ID：3828190 事务提交失败！
+            LoadData()
+            Return
+        }
+        
+        ; 🔍 验证属性关联
+        AttrCount := VerifyAllAttributes(FinalID, MainTable)
+        if (AttrCount < 0) {
+            MsgBox, 16, 错误, 错误 ID：5020111 属性关联验证失败
+        }
+        
+    } catch e {
+        eMessage := e.Message
+        RollbackSafeTransaction("ClipboardChanged")
+        MsgBox, 16, 错误, 错误 ID：4846379 ClipboardChanged 异常: %eMessage%
+    } finally {
+        ; 🔄 更新全局变量
+        G_last_insert_rowid := FinalID
+        g_CurrentRecord.ID := FinalID
+        g_CurrentRecord.TableName := MainTable
+        SB_SetText("ClipboardChanged: 填充缓存 ID=" . FinalID)
+        
+        ; 🔓 解锁
+        ProcessingContext := ""
+        if (ClipboardLock = 3) {
+            ClipboardLock := 0
+            PostMessage, 0x0400 + 1, 0, 0, , ahk_class AutoHotkey
+        }
+        
+        ; 🔄 刷新界面
+        LoadData()
+        GetGlobalMaxSortValue()
+    }
+    Return
+}
+
+; 2.1 主调度函数 - ProcessFileClipboard()
+ProcessFileClipboard(MainTable, DataTable, WindowTitle) {
+    ; 📋 解析剪贴板中的所有文件路径
+    ClipData := Clipboard
+    AllPaths := []
+    FileCount := 0
+    
+    Loop, Parse, Clipboard, `n, `r
+    {
+        Path := Trim(A_LoopField)
+        if (Path != "" && FileExist(Path)) {
+            AllPaths.Push(Path)
+            FileCount++
+        }
+    }
+    
+    ; ❌ 没有有效路径
+    if (FileCount = 0) {
+        Return ""
+    }
+    
+    ; 🎯 判断是文件夹模式还是文件模式
+    Path := AllPaths[1]
+    FileAttrib := FileExist(Path)
+    isFolderMode := InStr(FileAttrib, "D")
+    
+    ; 📁 获取分组（父文件夹名）
+    SplitPath, Path, , FileDir
+    Group := ""
+    if (FileDir) {
+        SplitPath, FileDir, Group
+    }
+    
+    FinalID := ""
+    
+    if (isFolderMode) {
+        ; 📂 文件夹模式：处理文件夹及其子项
+        FinalID := ProcessFolderMode(MainTable, DataTable, AllPaths, WindowTitle)
+    } else {
+        ; 📄 文件模式：处理单个或多个文件
+        FinalID := ProcessFilesMode(MainTable, DataTable, AllPaths, Group, WindowTitle)
+    }
+    
+    Return FinalID
+}
+
+; 2.2 文件夹模式处理 - ProcessFolderMode()
+ProcessFolderMode(MainTable, DataTable, AllPaths, WindowTitle) {
+    FinalID := ""
+    
+    ; 🔄 遍历所有路径（通常只有一个文件夹，但支持多个）
+    Loop, % AllPaths.Length() {
+        CurrentPath := AllPaths[A_Index]
+        CurrentAttrib := FileExist(CurrentPath)
+        
+        ; ⚠️ 跳过非文件夹
+        if (!InStr(CurrentAttrib, "D")) {
+            continue
+        }
+        
+        ; 📋 收集第一层子文件夹和文件
+        FirstLevelFolders := []
+        FirstLevelFiles := []
+        
+        ; 收集子文件夹
+        Loop, Files, %CurrentPath%\*.*, D
+        {
+            FirstLevelFolders.Push(A_LoopFileFullPath)
+        }
+        
+        ; 收集直接文件
+        Loop, Files, %CurrentPath%\*.*, F
+        {
+            FirstLevelFiles.Push(A_LoopFileFullPath)
+        }
+        
+        ; 📂 为每个子文件夹单独创建记录
+        Loop, % FirstLevelFolders.Length() {
+            SubFolderPath := FirstLevelFolders[A_Index]
+            
+            ; 收集子文件夹数据
+            LocalData := CollectFolderData(SubFolderPath)
+            
+            if (LocalData.ClipData = "") {
+                continue
+            }
+            
+            ; 插入记录
+            FinalID := InsertRecord(MainTable, DataTable, LocalData, WindowTitle, true)
+            
+            if (FinalID = "" || FinalID <= 0) {
+                Return ""
+            }
+        }
+        
+        ; 📄 如果父文件夹有直接文件，为它们创建一条记录
+        if (FirstLevelFiles.Length() > 0) {
+            LocalData := CollectFilesInFolder(FirstLevelFiles, CurrentPath)
+            
+            if (LocalData.ClipData != "") {
+                FinalID := InsertRecord(MainTable, DataTable, LocalData, WindowTitle, true)
+                
+                if (FinalID = "" || FinalID <= 0) {
+                    Return ""
+                }
+            }
+        }
+    }
+    
+    Return FinalID
+}
+
+; 2.3 收集文件夹数据 - CollectFolderData()
+ProcessFolderMode(MainTable, DataTable, AllPaths, WindowTitle) {
+    FinalID := ""
+    
+    ; 🔄 遍历所有路径（通常只有一个文件夹，但支持多个）
+    Loop, % AllPaths.Length() {
+        CurrentPath := AllPaths[A_Index]
+        CurrentAttrib := FileExist(CurrentPath)
+        
+        ; ⚠️ 跳过非文件夹
+        if (!InStr(CurrentAttrib, "D")) {
+            continue
+        }
+        
+        ; 📋 收集第一层子文件夹和文件
+        FirstLevelFolders := []
+        FirstLevelFiles := []
+        
+        ; 收集子文件夹
+        Loop, Files, %CurrentPath%\*.*, D
+        {
+            FirstLevelFolders.Push(A_LoopFileFullPath)
+        }
+        
+        ; 收集直接文件
+        Loop, Files, %CurrentPath%\*.*, F
+        {
+            FirstLevelFiles.Push(A_LoopFileFullPath)
+        }
+        
+        ; 📂 为每个子文件夹单独创建记录
+        Loop, % FirstLevelFolders.Length() {
+            SubFolderPath := FirstLevelFolders[A_Index]
+            
+            ; 收集子文件夹数据
+            LocalData := CollectFolderData(SubFolderPath)
+            
+            if (LocalData.ClipData = "") {
+                continue
+            }
+            
+            ; 插入记录
+            FinalID := InsertRecord(MainTable, DataTable, LocalData, WindowTitle, true)
+            
+            if (FinalID = "" || FinalID <= 0) {
+                Return ""
+            }
+        }
+        
+        ; 📄 如果父文件夹有直接文件，为它们创建一条记录
+        if (FirstLevelFiles.Length() > 0) {
+            LocalData := CollectFilesInFolder(FirstLevelFiles, CurrentPath)
+            
+            if (LocalData.ClipData != "") {
+                FinalID := InsertRecord(MainTable, DataTable, LocalData, WindowTitle, true)
+                
+                if (FinalID = "" || FinalID <= 0) {
+                    Return ""
+                }
+            }
+        }
+    }
+    
+    Return FinalID
+}
+
+; 2.4 收集文件夹内文件数据 - CollectFilesInFolder()
+CollectFilesInFolder(FilesList, ParentPath) {
+    ; 📦 初始化数据结构
+    data := {}
+    data.ClipData := ""
+    data.Content := ""
+    data.Remark := ""
+    data.Identifier := "📁"
+    data.Format := "CF_HDROP,📁"
+    data.Group := ""
+    data.Bytes := ""
+    
+    LocalValidCount := FilesList.Length()
+    LocalTotalSize := 0
+    LocalFilePathsList := ""
+    
+    ; 📄 遍历所有文件
+    Loop, % FilesList.Length() {
+        FilePath := FilesList[A_Index]
+        LocalFilePathsList .= FilePath . "`n"
+        FileGetSize, FileSize, %FilePath%, B
+        LocalTotalSize += FileSize
+    }
+    
+    ; 🧹 清理路径列表
+    LocalFilePathsList := RTrim(LocalFilePathsList, "`n")
+    data.ClipData := LocalFilePathsList
+    
+    ; 📏 格式化大小
+    LocalSizeStr := FormatFileSize(LocalTotalSize)
+    data.Bytes := LocalSizeStr
+    
+    ; 📝 提取父文件夹信息
+    SplitPath, ParentPath, , LocalFileDir, , LocalFileNameNoExt
+    SplitPath, LocalFileDir, , , , LocalParentDir
+    data.Group := LocalFileDir ? LocalParentDir : ""
+    
+    ; ✍️ 生成内容描述
+    data.Content := "Copied Files from - " . LocalFileNameNoExt . " | 数量: " . LocalValidCount . " | 有效: " . LocalValidCount . " | 大小: " . LocalSizeStr
+    data.Remark := ParentPath
+    
+    Return data
+}
+
+; 2.5 文件模式处理 - ProcessFilesMode()
+ProcessFilesMode(MainTable, DataTable, AllPaths, Group, WindowTitle) {
+    ValidCount := 0
+    TotalSize := 0
+    FilePathsList := ""
+    
+    ; 📋 收集文件类型标识符和扩展名
+    UniqueIdentifiers := {}
+    UniqueExts := {}
+    
+    ; 🔄 遍历所有文件
+    Loop, % AllPaths.Length() {
+        CurrentPath := AllPaths[A_Index]
+        FilePathsList .= CurrentPath . "`n"
+        
+        ; 📏 计算文件大小
+        FileGetSize, FileSize, %CurrentPath%, B
+        TotalSize += FileSize
+        ValidCount++
+        
+        ; 🏷️ 获取文件扩展名
+        SplitPath, CurrentPath, , , FileExt
+        
+        ; 🎨 获取文件类型符号
+        Symbol := GetFileTypeSymbol(CurrentPath, FileExt)
+        if (Symbol != "") {
+            SymbolsList := StrSplit(Symbol, ",")
+            for _, s in SymbolsList {
+                UniqueIdentifiers[s] := 1
+            }
+        }
+        
+        ; 📎 记录扩展名
+        if (FileExt != "") {
+            UniqueExts[FileExt] := 1
+        }
+    }
+    
+    ; 🧹 清理路径列表
+    FilePathsList := RTrim(FilePathsList, "`n")
+    
+    ; 🔗 组合标识符
+    IdentifierStr := ""
+    for k, v in UniqueIdentifiers {
+        IdentifierStr .= k . ","
+    }
+    Identifier := RTrim(IdentifierStr, ",")
+    
+    ; 🏷️ 构建格式字符串
+    Format := "CF_HDROP"
+    if (Identifier != "") {
+        Format .= "," . Identifier
+    }
+    
+    ; 📝 添加扩展名到格式字符串
+    ExtStr := ""
+    for k, v in UniqueExts {
+        ExtStr .= k . ","
+    }
+    ExtStr := RTrim(ExtStr, ",")
+    
+    if (ExtStr != "") {
+        Format .= "," . ExtStr
+    }
+    
+    ; 📏 格式化总大小
+    SizeStr := FormatFileSize(TotalSize)
+    
+    ; 📝 获取第一个文件的信息（用于备注）
+    Path := AllPaths[1]
+    SplitPath, Path, FileName, , , FileNameNoExt
+    
+    ; 📦 构建数据对象
+    data := {}
+    data.ClipData := FilePathsList
+    data.Content := "Copied File - " . FileNameNoExt . " | 数量: " . AllPaths.Length() . " | 有效: " . ValidCount . " | 大小: " . SizeStr
+    data.Remark := FileName
+    data.Identifier := Identifier
+    data.Format := Format
+    data.Group := Group
+    data.Bytes := SizeStr
+    
+    ; 💾 插入记录
+    FinalID := InsertRecord(MainTable, DataTable, data, WindowTitle, false)
+    
+    Return FinalID
+}
+
+; 2.6 辅助函数 - FormatFileSize()
+FormatFileSize(Bytes) {
+    ; 📏 格式化文件大小为人类可读格式
+    if (Bytes < 1024) {
+        Return Bytes . " B"
+    } else if (Bytes < 1024 * 1024) {
+        Return Round(Bytes / 1024, 2) . " KB"
+    } else if (Bytes < 1024 * 1024 * 1024) {
+        Return Round(Bytes / (1024 * 1024), 2) . " MB"
+    } else {
+        Return Round(Bytes / (1024 * 1024 * 1024), 2) . " GB"
+    }
+}
+
+; 2.7 辅助函数 - GetFileTypeSymbol()（已存在，这里提供完整版）
+GetFileTypeSymbol(filePath, fileExt) {
+    ; 📁 文件夹
+    if (InStr(FileExist(filePath), "D")) {
+        Return "📁"
+    }
+    
+    ; 🎵 音乐文件分类
+    lossyMusicExts := "mp3,aac,m4a,ogg"
+    losslessMusicExts := "flac,alac,ape"
+    uncompressedMusicExts := "wav,aiff"
+    specialMusicExts := "dsf,dff,mid"
+    
+    ; 🎬 视频文件
+    videoExts := "mp4,avi,mkv,wmv,flv,mov"
+    
+    ; 🖼️ 图片文件
+    imageExts := "jpg,jpeg,png,gif,bmp,tiff"
+    
+    ; 📄 文档文件
+    docExts := "doc,docx,pdf,txt,rtf"
+    
+    ; 🎯 根据扩展名返回符号
+    if (InStr(lossyMusicExts, fileExt))
+        Return "🎧,♫"
+    else if (InStr(losslessMusicExts, fileExt) || (fileExt = "m4a" && InStr(filePath, "ALAC")))
+        Return "🎼,♫"
+    else if (InStr(uncompressedMusicExts, fileExt))
+        Return "📀,♫"
+    else if (InStr(specialMusicExts, fileExt))
+        Return "🎶,♫"
+    else if (InStr(videoExts, fileExt))
+        Return "🎥"
+    else if (InStr(imageExts, fileExt))
+        Return "🖼️"
+    else if (InStr(docExts, fileExt))
+        Return "📎"
+    else
+        Return "📎"
 }
