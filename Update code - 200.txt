@@ -1,11 +1,10 @@
-代码A:
 ClipboardChanged(type) {
     Global SQLiteDB, DBPath, IsCopying, ClipboardLock, ProcessingContext, TransactionActive, TransactionOwner, G_last_insert_rowid, G_last_insert_Main_ID, G_last_insert_Main_TableName
-	; 🔥 添加这个检查 - 任何非零的 ClipboardLock 都应该阻止执行
+; 🔥 添加这个检查 - 任何非零的 ClipboardLock 都应该阻止执行
     if (ClipboardLock != 0) {
         Return
     }
-  
+ 
     WinGet, ActiveID, ID, A
     WinGetTitle, WindowTitle, ahk_id %ActiveID%
     if (InStr(WindowTitle, "印象记忆_5")) {
@@ -23,7 +22,7 @@ ClipboardChanged(type) {
             LoadData()
             Return
         }
-        
+       
         ; 🔥 测试数据库是否可写（防止被占用）
         TestWriteSQL := "CREATE TEMP TABLE IF NOT EXISTS _test_write (id INTEGER); DROP TABLE IF EXISTS _test_write;"
         if (!SQLiteDB.Exec(TestWriteSQL)) {
@@ -32,7 +31,6 @@ ClipboardChanged(type) {
             LoadData()
             Return
         }
-		
         ; 根据剪贴板内容动态决定主表名称
         isFileSystemContent := false
         if (DllCall("IsClipboardFormatAvailable", "UInt", 15)) { ; CF_HDROP
@@ -48,13 +46,11 @@ ClipboardChanged(type) {
                 }
             }
         }
-
         if (isFileSystemContent) {
             MainTable := "Database"
         } else {
             MainTable := "历史数据"
         }
-		
         OldMainTable := MainTable . "_temp_old"
         DataTable := "Data_" . MainTable
         OldDataTable := DataTable . "_temp_old"
@@ -220,7 +216,7 @@ ClipboardChanged(type) {
             Format := "CF_HDROP"
             ClipData := Clipboard
             FilePathsList := ""
-          
+         
             Loop, Parse, Clipboard, `n, `r
             {
                 Path := Trim(A_LoopField)
@@ -229,24 +225,24 @@ ClipboardChanged(type) {
                     FileCount++
                 }
             }
-          
+         
             if (FileCount = 0) {
                 RollbackSafeTransaction("ClipboardChanged")
                 LoadData()
                 Return
             }
-          
+         
             Path := AllPaths[1]
             FileAttrib := FileExist(Path)
             isFolderMode := InStr(FileAttrib, "D")
-          
+         
             SplitPath, Path, FileName, FileDir, FileExt, FileNameNoExt
             GroupName := ""
             if (FileDir) {
                 SplitPath, FileDir, GroupName
             }
             Group := GroupName
-          
+         
             if (isFolderMode) {
                 Loop, % AllPaths.MaxIndex() {
                     CurrentPath := AllPaths[A_Index]
@@ -254,37 +250,37 @@ ClipboardChanged(type) {
                     if (!InStr(CurrentAttrib, "D")) {
                         continue
                     }
-                  
+                 
                     ; 🔥 收集当前文件夹的第一层子文件夹和文件
                     FirstLevelFolders := []
                     FirstLevelFiles := []
-                    
+                   
                     ; 先收集子文件夹
                     Loop, Files, %CurrentPath%\\*.*, D
                     {
                         FirstLevelFolders.Push(A_LoopFileFullPath)
                     }
-                    
+                   
                     ; 再收集直接文件
                     Loop, Files, %CurrentPath%\\*.*, F
                     {
                         FirstLevelFiles.Push(A_LoopFileFullPath)
                     }
-                    
+                   
                     ; 🔥 为每个子文件夹单独创建记录
                     Loop, % FirstLevelFolders.Length() {
                         SubFolderPath := FirstLevelFolders[A_Index]
-                        
+                       
                         LocalValidCount := 0
                         LocalTotalSize := 0
                         LocalFilePathsList := ""
-                        
+                       
                         ; 收集子文件夹的第一层内容
                         Loop, Files, %SubFolderPath%\\*.*, D
                         {
                             LocalFilePathsList .= A_LoopFileFullPath . "`n"
                             LocalValidCount++
-                            
+                           
                             ; 递归计算大小
                             Loop, Files, %A_LoopFileFullPath%\\*.*, FR
                             {
@@ -292,7 +288,7 @@ ClipboardChanged(type) {
                                 LocalTotalSize += FileSize
                             }
                         }
-                        
+                       
                         Loop, Files, %SubFolderPath%\\*.*, F
                         {
                             LocalFilePathsList .= A_LoopFileFullPath . "`n"
@@ -300,10 +296,10 @@ ClipboardChanged(type) {
                             FileGetSize, FileSize, %A_LoopFileFullPath%, B
                             LocalTotalSize += FileSize
                         }
-                        
+                       
                         LocalFilePathsList := RTrim(LocalFilePathsList, "`n")
                         LocalClipData := LocalFilePathsList
-                      
+                     
                         LocalSizeStr := ""
                         if (LocalTotalSize > 0) {
                             if (LocalTotalSize < 1024)
@@ -315,47 +311,47 @@ ClipboardChanged(type) {
                             else
                                 LocalSizeStr := Round(LocalTotalSize / (1024 * 1024 * 1024),2) . " GB"
                         }
-                      
+                     
                         SplitPath, SubFolderPath, LocalFileName, LocalFileDir, , LocalFileNameNoExt
                         SplitPath, LocalFileDir, , , , LocalParentDir
                         LocalGroup := LocalFileDir ? LocalParentDir : ""
-                      
+                     
                         LocalTempRemark := "Copied Folder - " . LocalFileNameNoExt . " | 数量: 1 | 有效: " . LocalValidCount . " | 大小: " . LocalSizeStr
                         LocalContent := LocalTempRemark
                         LocalRemark := SubFolderPath
-                      
+                     
                         LocalIdentifier := "📁"
                         LocalFormat := "CF_HDROP,📁"
-                      
+                     
                         ClipData := LocalClipData
                         Content := LocalContent
                         Remark := LocalRemark
                         Identifier := LocalIdentifier
                         Format := LocalFormat
                         Group := LocalGroup
-                      
+                     
                         gosub, InsertCommon
                         if (FinalID = "" || FinalID <= 0) {
                             return
                         }
                     }
-                    
+                   
                     ; 🔥 如果父文件夹有直接文件，为这些文件创建一条记录
                     if (FirstLevelFiles.Length() > 0) {
                         LocalValidCount := FirstLevelFiles.Length()
                         LocalTotalSize := 0
                         LocalFilePathsList := ""
-                        
+                       
                         Loop, % FirstLevelFiles.Length() {
                             FilePath := FirstLevelFiles[A_Index]
                             LocalFilePathsList .= FilePath . "`n"
                             FileGetSize, FileSize, %FilePath%, B
                             LocalTotalSize += FileSize
                         }
-                        
+                       
                         LocalFilePathsList := RTrim(LocalFilePathsList, "`n")
                         LocalClipData := LocalFilePathsList
-                      
+                     
                         LocalSizeStr := ""
                         if (LocalTotalSize > 0) {
                             if (LocalTotalSize < 1024)
@@ -367,25 +363,25 @@ ClipboardChanged(type) {
                             else
                                 LocalSizeStr := Round(LocalTotalSize / (1024 * 1024 * 1024),2) . " GB"
                         }
-                      
+                     
                         SplitPath, CurrentPath, LocalFileName, LocalFileDir, , LocalFileNameNoExt
                         SplitPath, LocalFileDir, , , , LocalParentDir
                         LocalGroup := LocalFileDir ? LocalParentDir : ""
-                      
+                     
                         LocalTempRemark := "Copied Files from - " . LocalFileNameNoExt . " | 数量: " . LocalValidCount . " | 有效: " . LocalValidCount . " | 大小: " . LocalSizeStr
                         LocalContent := LocalTempRemark
                         LocalRemark := CurrentPath
-                      
+                     
                         LocalIdentifier := "📁"
                         LocalFormat := "CF_HDROP,📁"
-                      
+                     
                         ClipData := LocalClipData
                         Content := LocalContent
                         Remark := LocalRemark
                         Identifier := LocalIdentifier
                         Format := LocalFormat
                         Group := LocalGroup
-                      
+                     
                         gosub, InsertCommon
                         if (FinalID = "" || FinalID <= 0) {
                             return
@@ -396,19 +392,18 @@ ClipboardChanged(type) {
                 ValidCount := 0
                 TotalSize := 0
                 FilePathsList := ""
-                
+               
                 UniqueIdentifiers := {}
                 UniqueExts := {}
-
                 Loop, % AllPaths.MaxIndex() {
                     CurrentPath := AllPaths[A_Index]
                     FilePathsList .= CurrentPath . "`n"
                     FileGetSize, FileSize, %CurrentPath%, B
                     TotalSize += FileSize
                     ValidCount++
-                    
+                   
                     SplitPath, CurrentPath, , , FileExt
-                    
+                   
                     Symbol := GetFileTypeSymbol(CurrentPath, FileExt)
                     if (Symbol != "") {
                         SymbolsList := StrSplit(Symbol, ",")
@@ -422,13 +417,11 @@ ClipboardChanged(type) {
                 }
                 FilePathsList := RTrim(FilePathsList, "`n")
                 ClipData := FilePathsList
-
                 IdentifierStr := ""
                 for k, v in UniqueIdentifiers {
                     IdentifierStr .= k . ","
                 }
                 Identifier := RTrim(IdentifierStr, ",")
-
                 Format := "CF_HDROP"
                 if (Identifier != "") {
                     Format .= "," . Identifier
@@ -438,11 +431,10 @@ ClipboardChanged(type) {
                     ExtStr .= k . ","
                 }
                 ExtStr := RTrim(ExtStr, ",")
-
                 if (ExtStr != "") {
                     Format .= "," . ExtStr
                 }
-              
+             
                 SizeStr := ""
                 if (TotalSize > 0) {
                     if (TotalSize < 1024)
@@ -454,14 +446,13 @@ ClipboardChanged(type) {
                     else
                         SizeStr := Round(TotalSize / (1024 * 1024 * 1024),2) . " GB"
                 }
-              
+             
                 Path := AllPaths[1] ; For remark only
                 SplitPath, Path, FileName, , , FileNameNoExt
-
                 TempRemark := "Copied File - " . FileNameNoExt . " | 数量: " . FileCount . " | 有效: " . ValidCount . " | 大小: " . SizeStr
                 Content := TempRemark
                 Remark := FileName
-              
+             
                 gosub, InsertCommon
                 if (FinalID = "" || FinalID <= 0) {
                     return
@@ -578,7 +569,7 @@ ClipboardChanged(type) {
                     Content := "[文本] | " . CharCount . " 字符 | " . Bytes . " | " . LineCount . " 行"
                 }
             }
-          
+         
             gosub, InsertCommon
             if (FinalID = "" || FinalID <= 0) {
                 return
@@ -742,7 +733,7 @@ ClipboardChanged(type) {
         Success := false
         RetryCount := 3
         G_last_insert_rowid := ""
-      
+     
         if (ExistingID != "") {
             ; 🔥 修改：UPDATE 语句中 类型、分组、应用名称、标识 设为空
             UpdateSQL := "UPDATE " . MainTable . " SET 排序 = " . NewSortValue . ", 更新次数 = COALESCE(更新次数, 0) + 1, 修改时间 = datetime('now', 'localtime'), 访问时间 = datetime('now', 'localtime'), 内容 = '" . EscapedContent . "', 字节 = '" . EscapedBytes . "', 窗口详情 = '" . EscapedWindowDetail . "', 类型 = '', 分组 = '', 应用名称 = '', 标识 = '', 处理状态 = NULL, 提示时间 = NULL, 提示 = NULL WHERE ID = " . ExistingID . ";"
@@ -822,7 +813,7 @@ ClipboardChanged(type) {
                 LoadData()
                 Return
             }
-          
+         
             LastIDResult := {}
             G_last_insert_rowid := ""
             FinalID := ""
@@ -832,21 +823,21 @@ ClipboardChanged(type) {
             } else {
                 ErrorMsg := SQLiteDB._ErrMsg()
                 RollbackSafeTransaction("ClipboardChanged")
-                MsgBox, 16, 错误, 错误 ID：5224280 ;  获取全局ID失败: %ErrorMsg%
+                MsgBox, 16, 错误, 错误 ID：5224280 ; 获取全局ID失败: %ErrorMsg%
                 LoadData()
                 Return
             }
-          
+         
             if (FinalID = "" || FinalID <= 0) {
                 RollbackSafeTransaction("ClipboardChanged")
-                MsgBox, 16, 错误, 错误 ID：5234045 ;  全局ID无效: FinalID = %FinalID%
+                MsgBox, 16, 错误, 错误 ID：5234045 ; 全局ID无效: FinalID = %FinalID%
                 LoadData()
                 Return
             }
-          
+         
             ; 🔥 修改：INSERT 语句中 类型、分组、应用名称、标识 设为空字符串
             InsertMainSQL := "INSERT INTO " . MainTable . " (ID, 哈希值, 字节, 窗口详情, 类型, 排序, 更新次数, 创建时间, 修改时间, 访问时间, 备注, 内容, 分组, 应用名称, 标识, 处理状态, 提示时间, 提示) VALUES (" . FinalID . ", '" . EscapedHashValue . "', '" . EscapedBytes . "', '" . EscapedWindowDetail . "', '', " . NewSortValue . ", 0, datetime('now', 'localtime'), datetime('now', 'localtime'), datetime('now', 'localtime'), '" . EscapedRemark . "', '" . EscapedContent . "', '', '', '', NULL, NULL, NULL);"
-          
+         
             RetryCount := 3
             Success := false
             while (RetryCount > 0) {
@@ -878,16 +869,16 @@ ClipboardChanged(type) {
             if (!Success) {
                 RollbackSafeTransaction("ClipboardChanged")
                 ; MsgBox, 16, 错误, 错误 ID：1333744 插入主表失败: %ErrorMsg%`n`nSQL: %InsertMainSQL%
-				GetGlobalMaxSortValue()
-				ClipboardChanged(type)
+GetGlobalMaxSortValue()
+ClipboardChanged(type)
                 ; LoadData()
                 Return
             }
-          
+         
             MarkSQL := "UPDATE 中心化 SET 标记状态 = 1 WHERE Local_ID = " . FinalID . ";"
             if (!SQLiteDB.Exec(MarkSQL)) {
             }
-          
+         
             InsertDataSQL := "INSERT INTO " . DataTable . " (lParentID, strClipBoardFormat, ooData) VALUES (" . FinalID . ", '" . EscapedFormat . "', '" . EscapedClipData . "');"
             RetryCount := 3
             Success := false
@@ -913,11 +904,11 @@ ClipboardChanged(type) {
             G_last_insert_Main_ID := FinalID
             G_last_insert_Main_TableName := MainTable
         }
-        
+       
         ; 🔥 属性插入部分 - 开始（将 类型、分组、应用名称、标识 插入到关联属性表） - 已修复文件名提取与 AppName 过滤
         Attributes := []
         Attributes.Push({Format: "星级", Value: "0"})
-        
+       
         ; 🔥 重构：统一处理文件、多文件和文件夹的名称与关键字提取
         if (InStr(Format, "CF_HDROP")) {
             if (isFolderMode) {
@@ -925,13 +916,12 @@ ClipboardChanged(type) {
                 FolderFullPath := Remark ; Remark 变量在文件夹模式下存储了当前处理的文件夹的完整路径
                 if (FolderFullPath != "" && InStr(FileExist(FolderFullPath), "D")) {
                     SplitPath, FolderFullPath, FolderName
-                    
+                   
                     ; 1. 添加文件夹本身的名称作为 "文件名称" 和 "关键字"
                     if (FolderName != "") {
                         Attributes.Push({Format: "文件名称", Value: FolderName})
                         Attributes.Push({Format: "关键字", Value: FolderName})
                     }
-
                     ; 2. 遍历所有子文件，添加无扩展名的文件名作为关键字
                     Loop, Files, %FolderFullPath%\\*.*, F
                     {
@@ -947,7 +937,7 @@ ClipboardChanged(type) {
                     Loop, % AllPaths.MaxIndex() {
                         CurrentPath := AllPaths[A_Index]
                         SplitPath, CurrentPath, FileName, , , FileNameNoExt
-                        
+                       
                         if (FileName != "") {
                             Attributes.Push({Format: "文件名称", Value: FileName})
                         }
@@ -972,7 +962,7 @@ ClipboardChanged(type) {
                 } else {
                     FirstPath := Trim(Remark)
                 }
-                
+               
                 if (InStr(FirstPath, "\\") || InStr(FirstPath, "/")) {
                     SplitPath, FirstPath, TmpFileName, , , TmpFileNameNoExt
                     ExtractedFileName := TmpFileName
@@ -995,7 +985,7 @@ ClipboardChanged(type) {
                 }
             }
         }
-        
+       
         ; 将类型字段拆分后插入到关联属性表
         if (Format != "") {
             ; 拆分格式字符串（如 "CF_HDROP,📎,exe" -> ["CF_HDROP", "📎", "exe"]）
@@ -1008,7 +998,7 @@ ClipboardChanged(type) {
                 }
             }
         }
-        
+       
         ; 将标识符也插入到关联属性表
         if (Identifier != "") {
             IdentifierParts := StrSplit(Identifier, ",")
@@ -1019,25 +1009,25 @@ ClipboardChanged(type) {
                 }
             }
         }
-        
+       
         ; 如果是网址，添加特定关键字
         if (Identifier = "🔗") {
             Attributes.Push({Format: "关键字", Value: "网址"})
             Attributes.Push({Format: "关键字", Value: "链接"})
             Attributes.Push({Format: "关键字", Value: "网站"})
         }
-        
+       
         if (DataType = 1 && ClipData != "") {
             if (InStr(ClipData, ";") || InStr(ClipData, "{") || InStr(ClipData, "}") || InStr(ClipData, "function") || InStr(ClipData, "def ") || InStr(ClipData, "#include") || InStr(ClipData, "public ") || InStr(ClipData, "private ") || InStr(ClipData, "class ") || InStr(ClipData, "var ") || InStr(ClipData, "let ") || InStr(ClipData, "const ") || InStr(ClipData, "if (") || InStr(ClipData, "else") || InStr(ClipData, "for (") || InStr(ClipData, "while (")) {
                 Attributes.Push({Format: "关键字", Value: "代码"})
             }
         }
-        
+       
         ; 将分组插入到关联属性表
         if (Group != "") {
             Attributes.Push({Format: "分组", Value: Group})
         }
-        
+       
         ; 将应用名称插入到关联属性表（但避免把短版本号/短标识如 "V5" 当作应用名称或关键字）
         if (AppName != "" && AppName != "未知应用") {
             ; 仅当 AppName 不是短的版本号/短标识时，才插入为 “应用名称”
@@ -1088,7 +1078,7 @@ ClipboardChanged(type) {
                 }
             }
         }
-        
+       
         for index, attr in Attributes {
             Result := InsertAttribute(MainTable, FinalID, attr.Format, attr.Value)
             ErrorMsg := Result.ErrorMsg
@@ -1100,9 +1090,9 @@ ClipboardChanged(type) {
             }
         }
         ; 🔥 属性插入部分 - 结束
-        
+       
         return
-      
+     
     } catch e {
         eMessage := e.Message
         RollbackSafeTransaction("ClipboardChanged")
@@ -1118,11 +1108,10 @@ ClipboardChanged(type) {
             PostMessage, 0x0400 + 1, 0, 0, , ahk_class AutoHotkey
         }
         LoadData()
-		GetGlobalMaxSortValue()
+GetGlobalMaxSortValue()
     }
     Return
 }
-
 GetFileTypeSymbol(filePath, fileExt) {
     if (InStr(FileExist(filePath), "D")) {
         Return "📁"
@@ -1151,35 +1140,29 @@ GetFileTypeSymbol(filePath, fileExt) {
     else
         Return "📎"
 }
-
 InsertAttribute(TableName, DataID, AttrFormat, AttrValue, DataFormat := "") {
     Global SQLiteDB, DBPath
     Result := {}
     Result.Success := 0
     Result.ErrorMsg := ""
     Result.AttrID := ""
-
     ; AddDebugLog("InsertAttribute 开始, TableName=" . TableName . ", DataID=" . DataID . ", AttrFormat=" . AttrFormat . ", AttrValue=" . AttrValue . ", DataFormat=" . DataFormat)
-
     if (!SQLiteDB) {
         Result.ErrorMsg := "ERROR_202547: SQLiteDB 未初始化"
         ; AddDebugLog(Result.ErrorMsg)
         Return Result
     }
-
     if (!CheckDBUnlocked(DBPath)) {
         Result.ErrorMsg := "4351898: 数据库被锁定"
         ; AddDebugLog(Result.ErrorMsg)
         Return Result
     }
-
     ; 验证表名合法性（防止SQL注入）
     if (TableName = "" || RegExMatch(TableName, "[;'\[\]]")) {
         Result.ErrorMsg := "ERROR_202552: 表名非法: " . TableName
         ; AddDebugLog(Result.ErrorMsg)
         Return Result
     }
-
     ; 验证主表是否存在（注册登记主表）
     EscapedTableName := StrReplace(TableName, "'", "''")
     CheckMainTableSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . EscapedTableName . "';"
@@ -1189,7 +1172,6 @@ InsertAttribute(TableName, DataID, AttrFormat, AttrValue, DataFormat := "") {
         ; AddDebugLog(Result.ErrorMsg)
         Return Result
     }
-
     ; 验证ID是否存在于主表中
     CheckDataIDSQL := "SELECT ID FROM [" . EscapedTableName . "] WHERE ID = " . DataID . " LIMIT 1;"
     DataIDResult := {}
@@ -1198,9 +1180,7 @@ InsertAttribute(TableName, DataID, AttrFormat, AttrValue, DataFormat := "") {
         ; AddDebugLog(Result.ErrorMsg)
         Return Result
     }
-
     PropTableName := TableName . "_关联属性"
-
     ; 检查关联属性表是否存在
     CheckPropTableSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . PropTableName . "';"
     PropTableResult := {}
@@ -1210,41 +1190,35 @@ InsertAttribute(TableName, DataID, AttrFormat, AttrValue, DataFormat := "") {
         Return Result
     }
     ; AddDebugLog("属性关联表检查通过: " . PropTableName)
-
     AttrFormat := Trim(AttrFormat)
     AttrValue := Trim(AttrValue)
-
     if (AttrFormat = "" || AttrValue = "") {
         Result.Success := 1
         Result.ErrorMsg := "属性格式或值为空，跳过"
         ; AddDebugLog(Result.ErrorMsg)
         Return Result
     }
-
     if (StrLen(AttrValue) > 1000) {
         AttrValue := SubStr(AttrValue, 1, 1000)
     }
-
     if (AttrFormat = "星级" && AttrValue = "0") {
         Result.Success := 1
         Result.ErrorMsg := "星级为 0，跳过插入"
         ; AddDebugLog(Result.ErrorMsg)
         Return Result
     }
-
     EscapedAttrFormat := StrReplace(AttrFormat, "'", "''")
     EscapedAttrValue := StrReplace(AttrValue, "'", "''")
     EscapedDataFormat := StrReplace(DataFormat, "'", "''")
-    
+   
     ; 检查属性是否已存在（在全局关联属性表中）
     GetAttrIDSQL := "SELECT Local_ID, ID FROM 关联属性表 WHERE 属性类型 = '" . EscapedAttrFormat . "' AND 属性值 = '" . EscapedAttrValue . "' LIMIT 1;"
     AttrResult := {}
     AttrID := ""
-    
+   
     SQLiteDB.Exec("PRAGMA busy_timeout = 5000;")
-
     if (SQLiteDB.GetTable(GetAttrIDSQL, AttrResult) && AttrResult.RowCount > 0) {
-        AttrID := AttrResult.Rows[1][2]  ; 获取 ID 字段（TEXT）
+        AttrID := AttrResult.Rows[1][2] ; 获取 ID 字段（TEXT）
         ; AddDebugLog("找到现有属性 ID: " . AttrID)
     } else {
         ; AddDebugLog("未找到现有属性, 准备插入新属性")
@@ -1254,7 +1228,7 @@ InsertAttribute(TableName, DataID, AttrFormat, AttrValue, DataFormat := "") {
         } else {
             InsertAttrSQL := "INSERT OR IGNORE INTO 关联属性表 (属性类型, 属性值) VALUES ('" . EscapedAttrFormat . "', '" . EscapedAttrValue . "');"
         }
-        
+       
         RetryCount := 5
         Success := false
         while (RetryCount > 0) {
@@ -1273,21 +1247,21 @@ InsertAttribute(TableName, DataID, AttrFormat, AttrValue, DataFormat := "") {
             Result.ErrorMsg := "ERROR_202548: 插入关联属性表失败: " . ErrorMsg
             Return Result
         }
-        
+       
         if (!Success) {
             Result.ErrorMsg := "ERROR_202548: 插入关联属性表失败，超过重试次数"
             ; AddDebugLog(Result.ErrorMsg)
             Return Result
         }
-        
+       
         ; 获取新插入的 Local_ID 和 ID
         GetAttrIDSQL := "SELECT Local_ID, ID FROM 关联属性表 WHERE 属性类型 = '" . EscapedAttrFormat . "' AND 属性值 = '" . EscapedAttrValue . "' LIMIT 1;"
         RetryCount := 5
         while (RetryCount > 0) {
             if (SQLiteDB.GetTable(GetAttrIDSQL, AttrResult) && AttrResult.RowCount > 0) {
-                AttrID := AttrResult.Rows[1][2]  ; 获取 ID 字段
+                AttrID := AttrResult.Rows[1][2] ; 获取 ID 字段
                 if (AttrID = "") {
-                    AttrID := AttrResult.Rows[1][1]  ; 如果 ID 为空， fallback 到 Local_ID
+                    AttrID := AttrResult.Rows[1][1] ; 如果 ID 为空， fallback 到 Local_ID
                     ; 更新 ID 字段为 Local_ID 的文本形式
                     UpdateIDSQL := "UPDATE 关联属性表 SET ID = '" . AttrID . "' WHERE Local_ID = " . AttrResult.Rows[1][1] . ";"
                     if (!SQLiteDB.Exec(UpdateIDSQL)) {
@@ -1304,26 +1278,24 @@ InsertAttribute(TableName, DataID, AttrFormat, AttrValue, DataFormat := "") {
             Sleep, 100
             RetryCount--
         }
-        
+       
         if (AttrID = "") {
             Result.ErrorMsg := "ERROR_202549: 插入后未找到属性 ID，属性类型='" . AttrFormat . "', 属性值='" . AttrValue . "'"
             ; AddDebugLog(Result.ErrorMsg)
             Return Result
         }
     }
-
     if (AttrID = "") {
         Result.ErrorMsg := "ERROR_202549: 无效的属性 ID"
         ; AddDebugLog(Result.ErrorMsg)
         Return Result
     }
-
     ; 检查属性关联是否已存在（动态PropTableName）
     EscapedPropTable := StrReplace(PropTableName, "'", "''")
     CheckExistSQL := "SELECT COUNT(*) FROM [" . EscapedPropTable . "] WHERE 属性ID = '" . StrReplace(AttrID, "'", "''") . "' AND ID = " . DataID . ";"
     CheckResult := {}
     ExistingCount := 0
-    
+   
     if (SQLiteDB.GetTable(CheckExistSQL, CheckResult) && CheckResult.RowCount > 0) {
         ExistingCount := CheckResult.Rows[1][1]
         if (ExistingCount > 0) {
@@ -1340,14 +1312,13 @@ InsertAttribute(TableName, DataID, AttrFormat, AttrValue, DataFormat := "") {
         Return Result
     }
     ; AddDebugLog("属性关联不存在, 准备插入")
-
     ; 插入属性关联时也包含格式字段
     if (DataFormat != "") {
         InsertAssocSQL := "INSERT INTO [" . EscapedPropTable . "] (属性ID, ID, 格式) VALUES ('" . StrReplace(AttrID, "'", "''") . "', " . DataID . ", '" . EscapedDataFormat . "');"
     } else {
         InsertAssocSQL := "INSERT INTO [" . EscapedPropTable . "] (属性ID, ID) VALUES ('" . StrReplace(AttrID, "'", "''") . "', " . DataID . ");"
     }
-    
+   
     RetryCount := 5
     Success := false
     while (RetryCount > 0) {
@@ -1366,25 +1337,23 @@ InsertAttribute(TableName, DataID, AttrFormat, AttrValue, DataFormat := "") {
         Result.ErrorMsg := "2716957: 插入属性关联失败: " . ErrorMsg
         Return Result
     }
-    
+   
     if (!Success) {
         Result.ErrorMsg := "2720504: 插入属性关联失败，超过重试次数"
         ; AddDebugLog(Result.ErrorMsg)
         Return Result
     }
-
     Result.Success := 1
     Result.ErrorMsg := ""
     Result.AttrID := AttrID
     ; AddDebugLog("InsertAttribute 完成成功, TableName=" . TableName . ", AttrID=" . AttrID)
     Return Result
 }
-
 VerifyAllAttributes(DataID, TableName) {
     Global SQLiteDB
-    
+   
     AttrCount := 0
-    
+   
     ; 检查主表是否存在
     EscapedTableName := StrReplace(TableName, "'", "''")
     CheckMainTableSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . EscapedTableName . "';"
@@ -1393,7 +1362,7 @@ VerifyAllAttributes(DataID, TableName) {
         MsgBox, 16, 错误, VerifyAllAttributes: 主表 " . TableName . " 不存在
         Return -1
     }
-    
+   
     ; 检查 DataID 是否存在
     CheckDataIDSQL := "SELECT ID FROM [" . EscapedTableName . "] WHERE ID = " . DataID . " LIMIT 1;"
     DataIDResult := {}
@@ -1401,7 +1370,7 @@ VerifyAllAttributes(DataID, TableName) {
         MsgBox, 16, 错误, VerifyAllAttributes: ID " . DataID . " 在表 " . TableName . " 中不存在
         Return -1
     }
-    
+   
     ; 检查属性关联表是否存在
     PropTableName := TableName . "_关联属性"
     CheckPropTableSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . PropTableName . "';"
@@ -1410,17 +1379,13 @@ VerifyAllAttributes(DataID, TableName) {
         MsgBox, 16, 错误, VerifyAllAttributes: 属性关联表 " . PropTableName . " 不存在
         Return -1
     }
-    
+   
     Return AttrCount
 }
-
-
 ClipboardChangedTip() {
     CoordMode, Tooltip, Windows
     MouseGetPos, x, y
-
     message := "已成功创建数据！"
-
     Loop, 2 {
         Tooltip, %message%, x0, y-50
         Sleep, 100
@@ -1430,12 +1395,11 @@ ClipboardChangedTip() {
     Sleep, 1500
     Tooltip
 }
-
 BeginSafeTransaction(context) {
     Global SQLiteDB, TransactionActive, TransactionOwner
     if (TransactionActive) {
         ; AddDebugLog("事务已活跃，上下文: " . TransactionOwner . "，跳过 BEGIN")
-        Return true  ; 允许嵌套，但不额外 BEGIN（SQLite 用 SAVEPOINT）
+        Return true ; 允许嵌套，但不额外 BEGIN（SQLite 用 SAVEPOINT）
     }
     ; AddDebugLog("执行 BEGIN TRANSACTION")
     if (!SQLiteDB.Exec("BEGIN TRANSACTION;")) {
@@ -1448,7 +1412,6 @@ BeginSafeTransaction(context) {
     ; AddDebugLog("事务开始成功，Owner: " . context)
     Return true
 }
-
 CommitSafeTransaction(context) {
     Global SQLiteDB, TransactionActive, TransactionOwner
     if (!TransactionActive) {
@@ -1470,1317 +1433,6 @@ CommitSafeTransaction(context) {
     ; AddDebugLog("事务提交成功")
     Return true
 }
-
-RollbackSafeTransaction(context) {
-    Global SQLiteDB, TransactionActive, TransactionOwner
-    if (!TransactionActive) {
-        ; AddDebugLog("无活跃事务，跳过 ROLLBACK")
-    } else if (TransactionOwner != context) {
-        ; AddDebugLog("上下文不匹配，跳过 ROLLBACK")
-    } else {
-        ; AddDebugLog("执行 ROLLBACK")
-        SQLiteDB.Exec("ROLLBACK;")
-    }
-    TransactionActive := false
-    TransactionOwner := ""
-    ; AddDebugLog("事务回滚完成，重置标志")
-    Return true
-}
-
-;===================|===================
-
-代码B:
-ClipboardChanged(type) {
-    Global SQLiteDB, DBPath, IsCopying, ClipboardLock, ProcessingContext, TransactionActive, TransactionOwner, G_last_insert_rowid, G_last_insert_Main_ID, G_last_insert_Main_TableName
-	; 🔥 添加这个检查 - 任何非零的 ClipboardLock 都应该阻止执行
-    if (ClipboardLock != 0) {
-        Return
-    }
-  
-    WinGet, ActiveID, ID, A
-    WinGetTitle, WindowTitle, ahk_id %ActiveID%
-    if (InStr(WindowTitle, "印象记忆_5")) {
-        Return
-    }
-    if (type != 1 && type != 2) {
-        Return
-    }
-    ClipboardLock := 3
-    ProcessingContext := "Clipboard"
-    FinalID := ""
-    try {
-        if (!CheckDBUnlocked(DBPath)) {
-            MsgBox, 16, 错误, 错误 ID：4100220 ; 数据库被锁定！
-            LoadData()
-            Return
-        }
-        if (!SQLiteDB) {
-            SQLiteDB := New SQLiteDB()
-            if (!SQLiteDB.OpenDB(DBPath)) {
-                ErrorMsg := SQLiteDB._ErrMsg()
-                MsgBox, 16, 错误, 错误 ID：4103692 数据库打开失败: %ErrorMsg%
-                LoadData()
-                Return
-            }
-        }
-		
-        ; 根据剪贴板内容动态决定主表名称
-        isFileSystemContent := false
-        if (DllCall("IsClipboardFormatAvailable", "UInt", 15)) { ; CF_HDROP
-            isFileSystemContent := true
-        } else {
-            TempClipData := Clipboard
-            TempClipData := Trim(RegExReplace(TempClipData, "[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", ""))
-            if (TempClipData != "") {
-                lines := StrSplit(TempClipData, "`n")
-                FirstLine := Trim(lines[1])
-                if (RegExMatch(FirstLine, "^[A-Za-z]:\\.*$") || RegExMatch(FirstLine, "^\\\\.*$")) {
-                    isFileSystemContent := true
-                }
-            }
-        }
-
-        if (isFileSystemContent) {
-            MainTable := "Database"
-        } else {
-            MainTable := "历史数据"
-        }
-		
-        OldMainTable := MainTable . "_temp_old"
-        DataTable := "Data_" . MainTable
-        OldDataTable := DataTable . "_temp_old"
-        PropTable := MainTable . "_关联属性"
-        OldPropTable := PropTable . "_temp_old"
-        SQLiteDB.Exec("PRAGMA foreign_keys = OFF;")
-        CheckMainSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . MainTable . "';"
-        MainResult := {}
-        if (SQLiteDB.GetTable(CheckMainSQL, MainResult) && MainResult.RowCount = 0) {
-            CheckOldMainSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . OldMainTable . "';"
-            OldMainResult := {}
-            if (SQLiteDB.GetTable(CheckOldMainSQL, OldMainResult) && OldMainResult.RowCount > 0) {
-                RenameMainSQL := "ALTER TABLE [" . OldMainTable . "] RENAME TO [" . MainTable . "];"
-                if (SQLiteDB.Exec(RenameMainSQL)) {
-                } else {
-                    ErrorMsg := SQLiteDB._ErrMsg()
-                    MsgBox, 16, 错误, 错误 ID：4111311 无法恢复主表: %ErrorMsg%
-                    SQLiteDB.Exec("PRAGMA foreign_keys = ON;")
-                    LoadData()
-                    Return
-                }
-            } else {
-                MsgBox, 16, 错误, 错误 ID：4113412 主表缺失且无备份！
-                SQLiteDB.Exec("PRAGMA foreign_keys = ON;")
-                LoadData()
-                Return
-            }
-        } else {
-            CheckOldMainSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . OldMainTable . "';"
-            OldMainResult := {}
-            if (SQLiteDB.GetTable(CheckOldMainSQL, OldMainResult) && OldMainResult.RowCount > 0) {
-                if (SQLiteDB.Exec("DROP TABLE [" . OldMainTable . "];")) {
-                } else {
-                    ErrorMsg := SQLiteDB._ErrMsg()
-                }
-            }
-        }
-        CheckDataSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . DataTable . "';"
-        DataResult := {}
-        if (SQLiteDB.GetTable(CheckDataSQL, DataResult) && DataResult.RowCount = 0) {
-            CheckOldDataSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . OldDataTable . "';"
-            OldDataResult := {}
-            if (SQLiteDB.GetTable(CheckOldDataSQL, OldDataResult) && OldDataResult.RowCount > 0) {
-                RenameDataSQL := "ALTER TABLE [" . OldDataTable . "] RENAME TO [" . DataTable . "];"
-                if (SQLiteDB.Exec(RenameDataSQL)) {
-                    AlterDataSQL := "ALTER TABLE [" . DataTable . "] ADD FOREIGN KEY(lParentID) REFERENCES [" . MainTable . "](ID);"
-                    SQLiteDB.Exec(AlterDataSQL)
-                } else {
-                    ErrorMsg := SQLiteDB._ErrMsg()
-                    MsgBox, 16, 错误, 错误 ID：4119130 无法恢复数据表: %ErrorMsg%
-                    SQLiteDB.Exec("PRAGMA foreign_keys = ON;")
-                    LoadData()
-                    Return
-                }
-            }
-        } else {
-            CheckOldDataSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . OldDataTable . "';"
-            OldDataResult := {}
-            if (SQLiteDB.GetTable(CheckOldDataSQL, OldDataResult) && OldDataResult.RowCount > 0) {
-                if (SQLiteDB.Exec("DROP TABLE [" . OldDataTable . "];")) {
-                } else {
-                    ErrorMsg := SQLiteDB._ErrMsg()
-                }
-            }
-        }
-        CheckPropSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . PropTable . "';"
-        PropResult := {}
-        if (SQLiteDB.GetTable(CheckPropSQL, PropResult) && PropResult.RowCount = 0) {
-            CheckOldPropSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . OldPropTable . "';"
-            OldPropResult := {}
-            if (SQLiteDB.GetTable(CheckOldPropSQL, OldPropResult) && OldPropResult.RowCount > 0) {
-                RenamePropSQL := "ALTER TABLE [" . OldPropTable . "] RENAME TO [" . PropTable . "];"
-                if (SQLiteDB.Exec(RenamePropSQL)) {
-                    AlterPropFK1SQL := "ALTER TABLE [" . PropTable . "] ADD FOREIGN KEY(属性ID) REFERENCES 关联属性表(ID);"
-                    AlterPropFK2SQL := "ALTER TABLE [" . PropTable . "] ADD FOREIGN KEY(ID) REFERENCES [" . MainTable . "](ID) ON DELETE CASCADE;"
-                    SQLiteDB.Exec(AlterPropFK1SQL)
-                    SQLiteDB.Exec(AlterPropFK2SQL)
-                } else {
-                    ErrorMsg := SQLiteDB._ErrMsg()
-                    MsgBox, 16, 错误, 错误 ID：4127581 无法恢复属性表: %ErrorMsg%
-                    SQLiteDB.Exec("PRAGMA foreign_keys = ON;")
-                    LoadData()
-                    Return
-                }
-            }
-        } else {
-            CheckOldPropSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . OldPropTable . "';"
-            OldPropResult := {}
-            if (SQLiteDB.GetTable(CheckOldPropSQL, OldPropResult) && OldPropResult.RowCount > 0) {
-                if (SQLiteDB.Exec("DROP TABLE [" . OldPropTable . "];")) {
-                } else {
-                    ErrorMsg := SQLiteDB._ErrMsg()
-                }
-            }
-        }
-        SQLiteDB.Exec("PRAGMA foreign_keys = ON;")
-        CheckAssocTableSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='关联属性表';"
-        CheckPropTableSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . PropTable . "';"
-        CheckMainTableSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . MainTable . "';"
-        AssocTableResult := {}
-        PropTableResult := {}
-        MainTableResult := {}
-        if (!SQLiteDB.GetTable(CheckAssocTableSQL, AssocTableResult) || AssocTableResult.RowCount = 0) {
-            MsgBox, 16, 错误, 错误 ID：4133064 关联属性表不存在！
-            LoadData()
-            Return
-        }
-        if (!SQLiteDB.GetTable(CheckPropTableSQL, PropTableResult) || PropTableResult.RowCount = 0) {
-            MsgBox, 16, 错误, 错误 ID：4135569, A_Space . PropTable . " 表不存在！"
-            LoadData()
-            Return
-        }
-        if (!SQLiteDB.GetTable(CheckMainTableSQL, MainTableResult) || MainTableResult.RowCount = 0) {
-            MsgBox, 16, 错误, 错误 ID：4140580, A_Space . MainTable . " 表不存在！"
-            LoadData()
-            Return
-        }
-        GetColumnsSQL := "PRAGMA table_info(" . MainTable . ");"
-        ColumnsResult := {}
-        RequiredFields := ["备注", "内容", "置顶", "置顶索引", "收藏", "禁删", "星级", "标签", "分组", "类型", "创建时间", "修改时间", "访问时间", "访问次数", "更新次数", "字节", "字符", "行数", "数量", "标识", "窗口详情", "应用名称", "哈希值", "排序", "标记状态"]
-        MissingFields := []
-        if (SQLiteDB.GetTable(GetColumnsSQL, ColumnsResult)) {
-            ExistingColumns := []
-            Loop, % ColumnsResult.RowCount {
-                ExistingColumns.Insert(ColumnsResult.Rows[A_Index][2])
-            }
-            for index, field in RequiredFields {
-                if (!ArrayContains(ExistingColumns, field)) {
-                    MissingFields.Insert(field)
-                }
-            }
-            if (MissingFields.MaxIndex() > 0) {
-                MissingFieldsList := Join(MissingFields, ", ")
-                MsgBox, 16, 错误, 错误 ID：4146625, A_Space . MainTable . "表缺少必要字段：%MissingFieldsList%"
-                LoadData()
-                Return
-            }
-        } else {
-            ErrorMsg := SQLiteDB._ErrMsg()
-            MsgBox, 16, 错误, 错误 ID：4149159 查询表结构失败: %ErrorMsg%
-            LoadData()
-            Return
-        }
-        Sleep, 100
-        ClipData := ""
-        Format := ""
-        DataType := 1
-        Identifier := ""
-        FileCount := 0
-        ValidCount := 0
-        TotalSize := 0
-        Bytes := ""
-        Group := ""
-        Remark := ""
-        AllPaths := []
-        FolderPath := ""
-        if (!BeginSafeTransaction("ClipboardChanged")) {
-            MsgBox, 16, 错误, 错误 ID：1938940 开始事务失败！
-            LoadData()
-            Return
-        }
-        if (DllCall("IsClipboardFormatAvailable", "UInt", 15)) {
-            Format := "CF_HDROP"
-            ClipData := Clipboard
-            FilePathsList := ""
-          
-            Loop, Parse, Clipboard, `n, `r
-            {
-                Path := Trim(A_LoopField)
-                if (Path != "" && FileExist(Path)) {
-                    AllPaths.Push(Path)
-                    FileCount++
-                }
-            }
-          
-            if (FileCount = 0) {
-                RollbackSafeTransaction("ClipboardChanged")
-                LoadData()
-                Return
-            }
-          
-            Path := AllPaths[1]
-            FileAttrib := FileExist(Path)
-            isFolderMode := InStr(FileAttrib, "D")
-          
-            SplitPath, Path, FileName, FileDir, FileExt, FileNameNoExt
-            SplitPath, FileDir, , , , ParentDir
-            Group := FileDir ? ParentDir : ""
-          
-            if (isFolderMode) {
-                Loop, % AllPaths.MaxIndex() {
-                    CurrentPath := AllPaths[A_Index]
-                    CurrentAttrib := FileExist(CurrentPath)
-                    if (!InStr(CurrentAttrib, "D")) {
-                        continue
-                    }
-                  
-                    ; 🔥 收集当前文件夹的第一层子文件夹和文件
-                    FirstLevelFolders := []
-                    FirstLevelFiles := []
-                    
-                    ; 先收集子文件夹
-                    Loop, Files, %CurrentPath%\*.*, D
-                    {
-                        FirstLevelFolders.Push(A_LoopFileFullPath)
-                    }
-                    
-                    ; 再收集直接文件
-                    Loop, Files, %CurrentPath%\*.*, F
-                    {
-                        FirstLevelFiles.Push(A_LoopFileFullPath)
-                    }
-                    
-                    ; 🔥 为每个子文件夹单独创建记录
-                    Loop, % FirstLevelFolders.Length() {
-                        SubFolderPath := FirstLevelFolders[A_Index]
-                        
-                        LocalValidCount := 0
-                        LocalTotalSize := 0
-                        LocalFilePathsList := ""
-                        
-                        ; 收集子文件夹的第一层内容
-                        Loop, Files, %SubFolderPath%\*.*, D
-                        {
-                            LocalFilePathsList .= A_LoopFileFullPath . "`n"
-                            LocalValidCount++
-                            
-                            ; 递归计算大小
-                            Loop, Files, %A_LoopFileFullPath%\*.*, FR
-                            {
-                                FileGetSize, FileSize, %A_LoopFileFullPath%, B
-                                LocalTotalSize += FileSize
-                            }
-                        }
-                        
-                        Loop, Files, %SubFolderPath%\*.*, F
-                        {
-                            LocalFilePathsList .= A_LoopFileFullPath . "`n"
-                            LocalValidCount++
-                            FileGetSize, FileSize, %A_LoopFileFullPath%, B
-                            LocalTotalSize += FileSize
-                        }
-                        
-                        LocalFilePathsList := RTrim(LocalFilePathsList, "`n")
-                        LocalClipData := LocalFilePathsList
-                      
-                        LocalSizeStr := FormatBytes(LocalTotalSize)
-                      
-                        SplitPath, SubFolderPath, LocalFileName, LocalFileDir, , LocalFileNameNoExt
-                        SplitPath, LocalFileDir, , , , LocalParentDir
-                        LocalGroup := LocalFileDir ? LocalParentDir : ""
-                      
-                        LocalTempRemark := "Copied Folder - " . LocalFileNameNoExt . " | 数量: 1 | 有效: " . LocalValidCount . " | 大小: " . LocalSizeStr
-                        LocalContent := LocalTempRemark
-                        LocalRemark := SubFolderPath
-                      
-                        LocalIdentifier := "📁"
-                        LocalFormat := "CF_HDROP,📁"
-                      
-                        ClipData := LocalClipData
-                        Content := LocalContent
-                        Remark := LocalRemark
-                        Identifier := LocalIdentifier
-                        Format := LocalFormat
-                        Group := LocalGroup
-                      
-                        gosub, InsertCommon
-                        if (FinalID = "" || FinalID <= 0) {
-                            return
-                        }
-                    }
-                    
-                    ; 🔥 如果父文件夹有直接文件，为这些文件创建一条记录
-                    if (FirstLevelFiles.Length() > 0) {
-                        LocalValidCount := FirstLevelFiles.Length()
-                        LocalTotalSize := 0
-                        LocalFilePathsList := ""
-                        
-                        Loop, % FirstLevelFiles.Length() {
-                            FilePath := FirstLevelFiles[A_Index]
-                            LocalFilePathsList .= FilePath . "`n"
-                            FileGetSize, FileSize, %FilePath%, B
-                            LocalTotalSize += FileSize
-                        }
-                        
-                        LocalFilePathsList := RTrim(LocalFilePathsList, "`n")
-                        LocalClipData := LocalFilePathsList
-                      
-                        LocalSizeStr := FormatBytes(LocalTotalSize)
-                      
-                        SplitPath, CurrentPath, LocalFileName, LocalFileDir, , LocalFileNameNoExt
-                        SplitPath, LocalFileDir, , , , LocalParentDir
-                        LocalGroup := LocalFileDir ? LocalParentDir : ""
-                      
-                        LocalTempRemark := "Copied Files from - " . LocalFileNameNoExt . " | 数量: " . LocalValidCount . " | 有效: " . LocalValidCount . " | 大小: " . LocalSizeStr
-                        LocalContent := LocalTempRemark
-                        LocalRemark := CurrentPath
-                      
-                        LocalIdentifier := "📁"
-                        LocalFormat := "CF_HDROP,📁"
-                      
-                        ClipData := LocalClipData
-                        Content := LocalContent
-                        Remark := LocalRemark
-                        Identifier := LocalIdentifier
-                        Format := LocalFormat
-                        Group := LocalGroup
-                      
-                        gosub, InsertCommon
-                        if (FinalID = "" || FinalID <= 0) {
-                            return
-                        }
-                    }
-                }
-            } else {
-                ValidCount := 0
-                TotalSize := 0
-                FilePathsList := ""
-                Loop, % AllPaths.MaxIndex() {
-                    CurrentPath := AllPaths[A_Index]
-                    FilePathsList .= CurrentPath . "`n"
-                    FileGetSize, FileSize, %CurrentPath%, B
-                    TotalSize += FileSize
-                    ValidCount++
-                }
-                FilePathsList := RTrim(FilePathsList, "`n")
-                ClipData := FilePathsList
-              
-                SizeStr := FormatBytes(TotalSize)
-              
-                ; 使用 GetFileTypeSymbol 函数获取标识符
-                Identifier := GetFileTypeSymbol(Path, FileExt)
-                Format := "CF_HDROP," . Identifier
-                if (FileExt != "") {
-                    Format .= "," . FileExt
-                }
-                TempRemark := "Copied File - " . FileNameNoExt . " | 数量: " . FileCount . " | 有效: " . ValidCount . " | 大小: " . SizeStr
-                Content := TempRemark
-                Remark := FileName
-              
-                gosub, InsertCommon
-                if (FinalID = "" || FinalID <= 0) {
-                    return
-                }
-            }
-        } else {
-            ClipData := Clipboard
-            Format := "CF_UNICODETEXT"
-            ClipData := RegExReplace(ClipData, "[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", "")
-            ClipData := Trim(ClipData)
-            if (ClipData = "" || RegExMatch(ClipData, "^\s*$")) {
-                RollbackSafeTransaction("ClipboardChanged")
-                LoadData()
-                Return
-            }
-            if (StrLen(ClipData) > 5000000) {
-                RollbackSafeTransaction("ClipboardChanged")
-                MsgBox, 16, 错误, 错误 ID：4159040 文本剪贴板内容过大（超过 5MB）！
-                LoadData()
-                Return
-            }
-            lines := StrSplit(ClipData, "`n")
-            FirstLine := Trim(lines[1])
-            if (RegExMatch(FirstLine, "^[A-Za-z]:\\.*$") || RegExMatch(FirstLine, "^\\\\.*$")) {
-                FirstAttrib := FileExist(FirstLine)
-                SplitPath, FirstLine, FileName, FileDir, FileExt, FileNameNoExt
-                if (InStr(FirstAttrib, "D")) {
-                    Identifier := "📁𝓟"
-                    Format := "CF_UNICODETEXT,📁𝓟"
-                } else {
-                    ; 使用 GetFileTypeSymbol 函数获取标识符
-                    Identifier := GetFileTypeSymbol(FirstLine, FileExt) . "𝓟"
-                    Format := "CF_UNICODETEXT," . Identifier
-                    if (FileExt != "") {
-                        Format .= "," . FileExt
-                    }
-                }
-                FileCount := 0
-                ValidCount := 0
-                TotalSize := 0
-                Loop, % lines.Length() {
-                    Path := Trim(lines[A_Index])
-                    if (Path != "" && FileExist(Path)) {
-                        FileAttrib := FileExist(Path)
-                        FileCount++
-                        if (InStr(FileAttrib, "D")) {
-                            Loop, Files, %Path%\*.*, F
-                            {
-                                if (FileExist(A_LoopFileFullPath)) {
-                                    ValidCount++
-                                    FileGetSize, FileSize, %A_LoopFileFullPath%, B
-                                    TotalSize += FileSize
-                                }
-                            }
-                        } else {
-                            ValidCount++
-                            FileGetSize, FileSize, %Path%, B
-                            TotalSize += FileSize
-                        }
-                    }
-                }
-                SizeStr := FormatBytes(TotalSize)
-                SplitPath, FileDir, , , , ParentDir
-                Group := FileDir ? ParentDir : ""
-                if (InStr(FirstAttrib, "D")) {
-                    TempRemark := "Copied Folder Path - " . FileNameNoExt . " | 数量: " . FileCount . " | 有效: " . ValidCount . " | 大小: " . SizeStr
-                } else {
-                    TempRemark := "Copied File Path - " . FileNameNoExt . " | 数量: " . FileCount . " | 有效: " . ValidCount . " | 大小: " . SizeStr
-                }
-                Content := RegExReplace(ClipData, "[\r\n]+", " ")
-                Remark := Content
-                Content := TempRemark
-            } else {
-                if (RegExMatch(ClipData, "^(https?|ftp)://[A-Za-z0-9\-\.]+(:[0-9]+)?(/[A-Za-z0-9\-\._~:/?#\[\]@!$&'()*+,;=%]*)?$")) {
-                    Format := "CF_UNICODETEXT,🔗"
-                    Identifier := "🔗"
-                    Content := ClipData
-                    if (RegExMatch(ClipData, "://([^/]+)", domainMatch)) {
-                        fullDomain := domainMatch1
-                        if (RegExMatch(fullDomain, "^(?:www\.)?([^.]+)\.[^.]+$", mainDomainMatch)) {
-                            Remark := mainDomainMatch1
-                        } else {
-                            Remark := fullDomain
-                        }
-                    } else {
-                        Remark := SubStr(ClipData, 1, 200)
-                    }
-                } else {
-                    Remark := FirstLine
-                    ByteCount := StrPut(ClipData, "UTF-8") - 1
-                    Bytes := FormatBytes(ByteCount)
-                    CharCount := StrLen(ClipData)
-                    LineCount := lines.Length()
-                    Content := "[文本] | " . CharCount . " 字符 | " . Bytes . " | " . LineCount . " 行"
-                }
-            }
-          
-            gosub, InsertCommon
-            if (FinalID = "" || FinalID <= 0) {
-                return
-            }
-        }
-        ; === 分类字典_One：最后插入ID（统一结构）===
-        DeleteRecordSQL := "DELETE FROM ""分类字典_One"" WHERE ""Category_Main"" = '最后插入ID' AND ""Category_Sub"" = '最后插入ID';"
-        SQLiteDB.Exec(DeleteRecordSQL)
-        LastIDValue := (FinalID ? FinalID : "")
-        InsertRecordSQL := "INSERT OR REPLACE INTO ""分类字典_One"" "
-                         . "(""Category_Main"", ""Category_Sub"", ""Record_Value"", ""Flag_Status"", ""Update_Time"") "
-                         . "VALUES ('最后插入ID', '最后插入ID', ?, 1, datetime('now','localtime'));"
-        if (SQLiteDB.ExecuteWithParams) {
-            SQLiteDB.ExecuteWithParams(InsertRecordSQL, [LastIDValue])
-        } else {
-            EscapedLastID := StrReplace(LastIDValue, "'", "''")
-            FallbackSQL := "INSERT OR REPLACE INTO ""分类字典_One"" "
-                         . "(""Category_Main"", ""Category_Sub"", ""Record_Value"", ""Flag_Status"", ""Update_Time"") "
-                         . "VALUES ('最后插入ID', '最后插入ID', '" . EscapedLastID . "', 1, datetime('now','localtime'));"
-            SQLiteDB.Exec(FallbackSQL)
-        }
-        if (!CommitSafeTransaction("ClipboardChanged")) {
-            RollbackSafeTransaction("ClipboardChanged")
-            MsgBox, 16, 错误, 错误 ID：3828190 事务提交失败！
-            LoadData()
-            Return
-        }
-        AttrCount := VerifyAllAttributes(FinalID, MainTable)
-        if (AttrCount < 0) {
-            MsgBox, 16, 错误, 错误 ID：5020111 属性关联验证失败
-        }
-        return
-    InsertCommon:
-        HashValue := ""
-        try {
-            if (ClipData != "") {
-                HashValue := Crypt.Hash.Str(ClipData, "SHA256")
-            }
-        } catch e {
-            eMessage := e.Message
-            RollbackSafeTransaction("ClipboardChanged")
-            MsgBox, 16, 错误, 错误 ID：5334156 计算哈希值失败: %eMessage%
-            LoadData()
-            Return
-        }
-        ; === 使用分类字典_One表维护排序最大值（带唯一性处理）===
-        GetMaxSortSQL := "SELECT COALESCE(""Record_Value"", 0) FROM ""分类字典_One"" WHERE ""Category_Main"" = '排序值' AND ""Category_Sub"" = '最大值' LIMIT 1;"
-        MaxSortResult := {}
-        CurrentMax := 0
-        if (SQLiteDB.GetTable(GetMaxSortSQL, MaxSortResult) && MaxSortResult.RowCount > 0) {
-            CurrentMax := MaxSortResult.Rows[1][1] + 0 ; 强制转为数字
-        } else {
-            ; 初始化
-            InitSQL := "INSERT OR IGNORE INTO ""分类字典_One"" (""Category_Main"", ""Category_Sub"", ""Record_Value"", ""Flag_Status"", ""Update_Time"") "
-                     . "VALUES ('排序值', '最大值', '0', 0, datetime('now','localtime'));"
-            if (!SQLiteDB.Exec(InitSQL)) {
-                ErrorMsg := SQLiteDB._ErrMsg()
-                RollbackSafeTransaction("ClipboardChanged")
-                MsgBox, 16, 错误, 错误 ID：3646934 新ID-排序初始化失败: %ErrorMsg%
-                LoadData()
-                Return
-            }
-            CurrentMax := 0
-        }
-        ; 循环获取唯一排序值
-        Loop {
-            NewSortValue := CurrentMax + 1
-            ; 尝试更新最大值
-            UpdateMaxSQL := "UPDATE ""分类字典_One"" SET ""Record_Value"" = ?, ""Update_Time"" = datetime('now','localtime') "
-                          . "WHERE ""Category_Main"" = '排序值' AND ""Category_Sub"" = '最大值' AND ""Record_Value"" = ?;"
-            Success := false
-            RetryCount := 3
-            while (RetryCount > 0) {
-                if (SQLiteDB.ExecuteWithParams) {
-                    if (SQLiteDB.ExecuteWithParams(UpdateMaxSQL, [NewSortValue, CurrentMax])) {
-                        Success := true
-                        break
-                    }
-                } else {
-                    FallbackSQL := "UPDATE ""分类字典_One"" SET ""Record_Value"" = '" . NewSortValue . "', ""Update_Time"" = datetime('now','localtime') "
-                                 . "WHERE ""Category_Main"" = '排序值' AND ""Category_Sub"" = '最大值' AND ""Record_Value"" = '" . CurrentMax . "';"
-                    if (SQLiteDB.Exec(FallbackSQL)) {
-                        Success := true
-                        break
-                    }
-                }
-                ErrorMsg := SQLiteDB._ErrMsg()
-                if (InStr(ErrorMsg, "SQLITE_BUSY")) {
-                    Sleep, 50
-                    RetryCount--
-                    continue
-                }
-                ; 新增：检查唯一约束失败
-                if (InStr(ErrorMsg, "UNIQUE constraint failed")) {
-                    ; 重新读取（使用修复后的 SQL）
-                    if (SQLiteDB.GetTable(GetMaxSortSQL, MaxSortResult) && MaxSortResult.RowCount > 0) {
-                        CurrentMax := MaxSortResult.Rows[1][1] + 0
-                    } else {
-                        CurrentMax := 0
-                    }
-                    break ; 退出 while，重试外层 Loop
-                }
-                break
-            }
-            if (Success) {
-                ; 更新成功，说明 NewSortValue 可用
-                break
-            } else {
-                ; 更新失败，说明有并发，重新读取当前最大值
-                if (SQLiteDB.GetTable(GetMaxSortSQL, MaxSortResult) && MaxSortResult.RowCount > 0) {
-                    CurrentMax := MaxSortResult.Rows[1][1] + 0
-                } else {
-                    CurrentMax := 0
-                }
-            }
-        }
-        ExistingID := ""
-        CheckSQL := "SELECT ID FROM " . MainTable . " WHERE 哈希值 = ? LIMIT 1;"
-        CheckResult := {}
-        if (SQLiteDB.GetTable(CheckSQL, CheckResult, [HashValue]) && CheckResult.RowCount >= 1) {
-            ExistingID := CheckResult.Rows[1][1]
-        }
-        if (StrLen(Content) > 1000000) {
-            Content := SubStr(Content, 1, 1000000)
-        }
-        if (StrLen(Remark) > 1000) {
-            Remark := SubStr(Remark, 1, 1000)
-        }
-        HashValue := HashValue ? HashValue : ""
-        Bytes := Bytes ? Bytes : ""
-        WindowDetail := WindowTitle ? WindowTitle : ""
-        Identifier := Identifier ? Identifier : ""
-        Format := Format ? Format : ""
-        Remark := Remark ? RegExReplace(Remark, "[\r\n\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", " ") : ""
-        Content := Content ?RegExReplace(Content, "[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", " ") : ""
-        Group := Group ? RegExReplace(Group, "[\r\n\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", " ") : ""
-        AppName := AppName ? RegExReplace(AppName, "[\r\n\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", " ") : "未知应用"
-        if (RegExMatch(WindowTitle, "(.+)\s*-\s*(.+)$", Match)) {
-            AppName := Trim(Match2)
-        } else {
-            AppName := WindowTitle ? WindowTitle : "未知应用"
-        }
-        EscapedHashValue := StrReplace(HashValue, "'", "''")
-        EscapedBytes := StrReplace(Bytes, "'", "''")
-        EscapedWindowDetail := StrReplace(WindowTitle, "'", "''")
-        EscapedIdentifier := StrReplace(Identifier, "'", "''")
-        EscapedFormat := StrReplace(Format, "'", "''")
-        EscapedRemark := StrReplace(Remark, "'", "''")
-        EscapedContent := StrReplace(Content, "'", "''")
-        EscapedGroup := StrReplace(Group, "'", "''")
-        EscapedAppName := StrReplace(AppName, "'", "''")
-        EscapedClipData := StrReplace(ClipData, "'", "''")
-        Success := false
-        RetryCount := 3
-        G_last_insert_rowid := ""
-      
-        if (ExistingID != "") {
-            ; 🔥 修改：UPDATE 语句中 类型、分组、应用名称、标识 设为空
-            UpdateSQL := "UPDATE " . MainTable . " SET 排序 = " . NewSortValue . ", 更新次数 = COALESCE(更新次数, 0) + 1, 修改时间 = datetime('now', 'localtime'), 访问时间 = datetime('now', 'localtime'), 内容 = '" . EscapedContent . "', 字节 = '" . EscapedBytes . "', 窗口详情 = '" . EscapedWindowDetail . "', 类型 = '', 分组 = '', 应用名称 = '', 标识 = '', 处理状态 = NULL, 提示时间 = NULL, 提示 = NULL WHERE ID = " . ExistingID . ";"
-            while (RetryCount > 0) {
-                if (SQLiteDB.Exec(UpdateSQL)) {
-                    Success := true
-                    FinalID := ExistingID
-                    G_last_insert_rowid := ExistingID
-                    G_last_insert_Main_ID := ExistingID
-                    G_last_insert_Main_TableName := MainTable
-                    break
-                }
-                ErrorMsg := SQLiteDB._ErrMsg()
-                if (InStr(ErrorMsg, "SQLITE_BUSY")) {
-                    Sleep, 100
-                    RetryCount--
-                    continue
-                }
-                break
-            }
-            if (!Success) {
-                RollbackSafeTransaction("ClipboardChanged")
-                MsgBox, 16, 错误, 错误 ID：3720054 更新主表失败: %ErrorMsg%
-                LoadData()
-                Return
-            }
-            DeleteDataSQL := "DELETE FROM " . DataTable . " WHERE lParentID = " . ExistingID . ";"
-            RetryCount := 3
-            Success := false
-            while (RetryCount > 0) {
-                if (SQLiteDB.Exec(DeleteDataSQL)) {
-                    Success := true
-                    break
-                }
-                ErrorMsg := SQLiteDB._ErrMsg()
-                if (InStr(ErrorMsg, "SQLITE_BUSY")) {
-                    Sleep, 100
-                    RetryCount--
-                    continue
-                }
-                break
-            }
-            if (!Success) {
-                RollbackSafeTransaction("ClipboardChanged")
-                MsgBox, 16, 错误, 错误 ID：3724787 ; 删除数据表失败: %ErrorMsg%
-                LoadData()
-                Return
-            }
-            InsertDataSQL := "INSERT INTO " . DataTable . " (lParentID, strClipBoardFormat, ooData) VALUES (" . ExistingID . ", '" . EscapedFormat . "', '" . EscapedClipData . "');"
-            RetryCount := 3
-            Success := false
-            while (RetryCount > 0) {
-                if (SQLiteDB.Exec(InsertDataSQL)) {
-                    Success := true
-                    break
-                }
-                ErrorMsg := SQLiteDB._ErrMsg()
-                if (InStr(ErrorMsg, "SQLITE_BUSY")) {
-                    Sleep, 100
-                    RetryCount--
-                    continue
-                }
-                break
-            }
-            if (!Success) {
-                RollbackSafeTransaction("ClipboardChanged")
-                MsgBox, 16, 错误, 错误 ID：3958064 ; 插入数据表失败: %ErrorMsg%
-                LoadData()
-                Return
-            }
-        } else {
-            AllocSQL := "INSERT INTO 中心化 (标记状态) VALUES (0);"
-            if (!SQLiteDB.Exec(AllocSQL)) {
-                ErrorMsg := SQLiteDB._ErrMsg()
-                RollbackSafeTransaction("ClipboardChanged")
-                MsgBox, 16, 错误, 错误 ID：5142862 ; 分配全局ID失败: %ErrorMsg%
-                LoadData()
-                Return
-            }
-          
-            LastIDResult := {}
-            G_last_insert_rowid := ""
-            FinalID := ""
-            if (SQLiteDB.GetTable("SELECT last_insert_rowid() AS newid;", LastIDResult) && LastIDResult.RowCount > 0) {
-                G_last_insert_rowid := LastIDResult.Rows[1][1]
-                FinalID := G_last_insert_rowid
-            } else {
-                ErrorMsg := SQLiteDB._ErrMsg()
-                RollbackSafeTransaction("ClipboardChanged")
-                MsgBox, 16, 错误, 错误 ID：5224280 ;  获取全局ID失败: %ErrorMsg%
-                LoadData()
-                Return
-            }
-          
-            if (FinalID = "" || FinalID <= 0) {
-                RollbackSafeTransaction("ClipboardChanged")
-                MsgBox, 16, 错误, 错误 ID：5234045 ;  全局ID无效: FinalID = %FinalID%
-                LoadData()
-                Return
-            }
-          
-            ; 🔥 修改：INSERT 语句中 类型、分组、应用名称、标识 设为空字符串
-            InsertMainSQL := "INSERT INTO " . MainTable . " (ID, 哈希值, 字节, 窗口详情, 类型, 排序, 更新次数, 创建时间, 修改时间, 访问时间, 备注, 内容, 分组, 应用名称, 标识, 处理状态, 提示时间, 提示) VALUES (" . FinalID . ", '" . EscapedHashValue . "', '" . EscapedBytes . "', '" . EscapedWindowDetail . "', '', " . NewSortValue . ", 0, datetime('now', 'localtime'), datetime('now', 'localtime'), datetime('now', 'localtime'), '" . EscapedRemark . "', '" . EscapedContent . "', '', '', '', NULL, NULL, NULL);"
-          
-            RetryCount := 3
-            Success := false
-            while (RetryCount > 0) {
-                if (SQLiteDB.Exec(InsertMainSQL)) {
-                    Success := true
-                    break
-                }
-                ErrorMsg := SQLiteDB._ErrMsg()
-                if (InStr(ErrorMsg, "UNIQUE constraint failed: " . MainTable . ".排序")) {
-                    ; 排序值冲突，重新获取
-                    if (SQLiteDB.GetTable(GetMaxSortSQL, MaxSortResult) && MaxSortResult.RowCount > 0) {
-                        CurrentMax := MaxSortResult.Rows[1][1] + 0
-                    } else {
-                        CurrentMax := 0
-                    }
-                    NewSortValue := CurrentMax + 1
-                    InsertMainSQL := RegExReplace(InsertMainSQL, "排序 = \d+", "排序 = " . NewSortValue)
-                    Sleep, 50
-                    RetryCount--
-                    continue
-                }
-                if (InStr(ErrorMsg, "SQLITE_BUSY")) {
-                    Sleep, 100
-                    RetryCount--
-                    continue
-                }
-                break
-            }
-            if (!Success) {
-                RollbackSafeTransaction("ClipboardChanged")
-                ; MsgBox, 16, 错误, 错误 ID：1333744 插入主表失败: %ErrorMsg%`n`nSQL: %InsertMainSQL%
-				GetGlobalMaxSortValue()
-				ClipboardChanged(type)
-                ; LoadData()
-                Return
-            }
-          
-            MarkSQL := "UPDATE 中心化 SET 标记状态 = 1 WHERE Local_ID = " . FinalID . ";"
-            if (!SQLiteDB.Exec(MarkSQL)) {
-            }
-          
-            InsertDataSQL := "INSERT INTO " . DataTable . " (lParentID, strClipBoardFormat, ooData) VALUES (" . FinalID . ", '" . EscapedFormat . "', '" . EscapedClipData . "');"
-            RetryCount := 3
-            Success := false
-            while (RetryCount > 0) {
-                if (SQLiteDB.Exec(InsertDataSQL)) {
-                    Success := true
-                    break
-                }
-                ErrorMsg := SQLiteDB._ErrMsg()
-                if (InStr(ErrorMsg, "SQLITE_BUSY")) {
-                    Sleep, 100
-                    RetryCount--
-                    continue
-                }
-                break
-            }
-            if (!Success) {
-                RollbackSafeTransaction("ClipboardChanged")
-                MsgBox, 16, 错误, 错误 ID：4653894 插入数据表失败: %ErrorMsg%
-                LoadData()
-                Return
-            }
-            G_last_insert_Main_ID := FinalID
-            G_last_insert_Main_TableName := MainTable
-        }
-        
-        ; 🔥 属性插入部分 - 开始（将 类型、分组、应用名称、标识 插入到关联属性表）
-        Attributes := []
-        Attributes.Push({Format: "星级", Value: "0"})
-        
-        ; 将类型字段拆分后插入到关联属性表
-        if (Format != "") {
-            ; 拆分格式字符串（如 "CF_HDROP,📎,exe" -> ["CF_HDROP", "📎", "exe"]）
-            FormatParts := StrSplit(Format, ",")
-            Loop, % FormatParts.Length() {
-                TypeValue := Trim(FormatParts[A_Index])
-                if (TypeValue != "" && TypeValue != "CF_HDROP" && TypeValue != "CF_UNICODETEXT") {
-                    ; 过滤掉系统格式标识，只保留有意义的类型
-                    Attributes.Push({Format: "类型", Value: TypeValue})
-                }
-            }
-        }
-        
-        ; 将标识符也插入到关联属性表
-        if (Identifier != "") {
-            Attributes.Push({Format: "标识", Value: Identifier})
-        }
-        
-        ; 如果是网址，添加特定关键字
-        if (Identifier = "🔗") {
-            Attributes.Push({Format: "关键字", Value: "网址"})
-            Attributes.Push({Format: "关键字", Value: "链接"})
-            Attributes.Push({Format: "关键字", Value: "网站"})
-        }
-        
-        if (DataType = 1 && ClipData != "") {
-            if (InStr(ClipData, ";") || InStr(ClipData, "{") || InStr(ClipData, "}") || InStr(ClipData, "function") || InStr(ClipData, "def ") || InStr(ClipData, "#include") || InStr(ClipData, "public ") || InStr(ClipData, "private ") || InStr(ClipData, "class ") || InStr(ClipData, "var ") || InStr(ClipData, "let ") || InStr(ClipData, "const ") || InStr(ClipData, "if (") || InStr(ClipData, "else") || InStr(ClipData, "for (") || InStr(ClipData, "while (")) {
-                Attributes.Push({Format: "关键字", Value: "代码"})
-            }
-        }
-        
-        ; 将分组插入到关联属性表
-        if (Group != "") {
-            Attributes.Push({Format: "分组", Value: Group})
-        }
-        
-        ; 将应用名称插入到关联属性表
-        if (AppName != "" && AppName != "未知应用") {
-            Attributes.Push({Format: "应用名称", Value: AppName})
-            IsFolderPath := (RegExMatch(AppName, "^[A-Za-z]:\\.*$") && InStr(FileExist(AppName), "D"))
-            if (!IsFolderPath) {
-                Tags := []
-                if (RegExMatch(AppName, "^(.+)\s*-\s*(.+)$", Match)) {
-                    FirstPart := Trim(Match1)
-                    SecondPart := Trim(Match2)
-                    if (!RegExMatch(FirstPart, "\.[a-zA-Z0-9]{1,4}$")) {
-                        Tags.Push(FirstPart)
-                    }
-                    if (SecondPart = "Google Chrome") {
-                        Tags.Push("Chrome")
-                    } else {
-                        Tags.Push(SecondPart)
-                    }
-                } else {
-                    if (AppName = "Google Chrome") {
-                        Tags.Push("Chrome")
-                    } else {
-                        Tags.Push(AppName)
-                    }
-                }
-                for index, Tag in Tags {
-                    if (Tag != "" && Tag != "未知应用") {
-                        Attributes.Push({Format: "关键字", Value: Tag})
-                    }
-                }
-            }
-        }
-        
-        for index, attr in Attributes {
-            Result := InsertAttribute(MainTable, FinalID, attr.Format, attr.Value)
-            ErrorMsg := Result.ErrorMsg
-            if (!Result.Success && ErrorMsg != "星级为 0，跳过插入" && ErrorMsg != "属性格式或值为空，跳过") {
-                RollbackSafeTransaction("ClipboardChanged")
-                MsgBox, 16, 错误, 错误 ID：2125567 插入属性失败: %ErrorMsg%
-                LoadData()
-                Return
-            }
-        }
-        ; 🔥 属性插入部分 - 结束
-        
-        return
-      
-    } catch e {
-        eMessage := e.Message
-        RollbackSafeTransaction("ClipboardChanged")
-        MsgBox, 16, 错误, 错误 ID：4846379 ClipboardChanged 异常: %eMessage%
-    } finally {
-        G_last_insert_rowid := FinalID
-        g_CurrentRecord.ID := FinalID
-        g_CurrentRecord.TableName := MainTable
-        SB_SetText("ClipboardChanged: 填充缓存 ID=" . FinalID)
-        ProcessingContext := ""
-        if (ClipboardLock = 3) {
-            ClipboardLock := 0
-            PostMessage, 0x0400 + 1, 0, 0, , ahk_class AutoHotkey
-        }
-		
-		SyncDatabaseWithFileSystem()
-        LoadData()
-		GetGlobalMaxSortValue()
-		
-    }
-    Return
-}
-
-CheckExt(extList, fileExt) {
-    for _, ext in extList
-        if (ext = fileExt)
-            return true
-    return false
-}
-
-GetFileTypeSymbol(filePath, fileExt) {
-    if (InStr(FileExist(filePath), "D")) {
-        return "📁"
-    }
-
-    ; 分类数组，严格按扩展名匹配
-    lossyMusicExts := ["mp3","aac","m4a","ogg"]
-    losslessMusicExts := ["flac","alac","ape"]
-    uncompressedMusicExts := ["wav","aiff"]
-    specialMusicExts := ["dsf","dff","mid"]
-    videoExts := ["mp4","avi","mkv","wmv","flv","mov"]
-    imageExts := ["jpg","jpeg","png","gif","bmp","tiff","psd","ai","svg","eps","cdr","heic","webp","avif","ico","raw","nef","cr2","arw","tga","dds"]
-    docExts := ["doc","docx","pdf","txt","rtf"]
-
-    ; 统一转小写，避免大小写误判
-    fileExt := StrLower(fileExt)
-
-    ; 分类判断
-    if (CheckExt(lossyMusicExts, fileExt))
-        return "🎧,♫"
-    else if (CheckExt(losslessMusicExts, fileExt) || (fileExt = "m4a" && InStr(filePath, "ALAC")))
-        return "🎼,♫"
-    else if (CheckExt(uncompressedMusicExts, fileExt))
-        return "📀,♫"
-    else if (CheckExt(specialMusicExts, fileExt))
-        return "🎶,♫"
-    else if (CheckExt(videoExts, fileExt))
-        return "🎥"
-    else if (CheckExt(imageExts, fileExt))
-        return "🖼️"
-    else if (CheckExt(docExts, fileExt))
-        return "📎"
-    else
-        return "📎"
-}
-
-InsertAttribute(TableName, DataID, AttrFormat, AttrValue, DataFormat := "") {
-    Global SQLiteDB, DBPath
-    Result := {}
-    Result.Success := 0
-    Result.ErrorMsg := ""
-    Result.AttrID := ""
-
-    ; AddDebugLog("InsertAttribute 开始, TableName=" . TableName . ", DataID=" . DataID . ", AttrFormat=" . AttrFormat . ", AttrValue=" . AttrValue . ", DataFormat=" . DataFormat)
-
-    if (!SQLiteDB) {
-        Result.ErrorMsg := "ERROR_202547: SQLiteDB 未初始化"
-        ; AddDebugLog(Result.ErrorMsg)
-        Return Result
-    }
-
-    if (!CheckDBUnlocked(DBPath)) {
-        Result.ErrorMsg := "4351898: 数据库被锁定"
-        ; AddDebugLog(Result.ErrorMsg)
-        Return Result
-    }
-
-    ; 验证表名合法性（防止SQL注入）
-    if (TableName = "" || RegExMatch(TableName, "[;'\[\]]")) {
-        Result.ErrorMsg := "ERROR_202552: 表名非法: " . TableName
-        ; AddDebugLog(Result.ErrorMsg)
-        Return Result
-    }
-
-    ; 验证主表是否存在（注册登记主表）
-    EscapedTableName := StrReplace(TableName, "'", "''")
-    CheckMainTableSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . EscapedTableName . "';"
-    MainTableResult := {}
-    if (!SQLiteDB.GetTable(CheckMainTableSQL, MainTableResult) || MainTableResult.RowCount = 0) {
-        Result.ErrorMsg := "ERROR_202553: 主表 " . TableName . " 不存在"
-        ; AddDebugLog(Result.ErrorMsg)
-        Return Result
-    }
-
-    ; 验证ID是否存在于主表中
-    CheckDataIDSQL := "SELECT ID FROM [" . EscapedTableName . "] WHERE ID = " . DataID . " LIMIT 1;"
-    DataIDResult := {}
-    if (!SQLiteDB.GetTable(CheckDataIDSQL, DataIDResult) || DataIDResult.RowCount = 0) {
-        Result.ErrorMsg := "ERROR_6247458: ID " . DataID . " 在表 " . TableName . " 中不存在"
-        ; AddDebugLog(Result.ErrorMsg)
-        Return Result
-    }
-
-    PropTableName := TableName . "_关联属性"
-
-    ; 检查关联属性表是否存在
-    CheckPropTableSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . PropTableName . "';"
-    PropTableResult := {}
-    if (!SQLiteDB.GetTable(CheckPropTableSQL, PropTableResult) || PropTableResult.RowCount = 0) {
-        Result.ErrorMsg := "ERROR_5354041: 属性关联表 " . PropTableName . " 不存在"
-        ; AddDebugLog(Result.ErrorMsg)
-        Return Result
-    }
-    ; AddDebugLog("属性关联表检查通过: " . PropTableName)
-
-    AttrFormat := Trim(AttrFormat)
-    AttrValue := Trim(AttrValue)
-
-    if (AttrFormat = "" || AttrValue = "") {
-        Result.Success := 1
-        Result.ErrorMsg := "属性格式或值为空，跳过"
-        ; AddDebugLog(Result.ErrorMsg)
-        Return Result
-    }
-
-    if (StrLen(AttrValue) > 1000) {
-        AttrValue := SubStr(AttrValue, 1, 1000)
-    }
-
-    if (AttrFormat = "星级" && AttrValue = "0") {
-        Result.Success := 1
-        Result.ErrorMsg := "星级为 0，跳过插入"
-        ; AddDebugLog(Result.ErrorMsg)
-        Return Result
-    }
-
-    EscapedAttrFormat := StrReplace(AttrFormat, "'", "''")
-    EscapedAttrValue := StrReplace(AttrValue, "'", "''")
-    EscapedDataFormat := StrReplace(DataFormat, "'", "''")
-    
-    ; 检查属性是否已存在（在全局关联属性表中）
-    GetAttrIDSQL := "SELECT Local_ID, ID FROM 关联属性表 WHERE 属性类型 = '" . EscapedAttrFormat . "' AND 属性值 = '" . EscapedAttrValue . "' LIMIT 1;"
-    AttrResult := {}
-    AttrID := ""
-    
-    SQLiteDB.Exec("PRAGMA busy_timeout = 5000;")
-
-    if (SQLiteDB.GetTable(GetAttrIDSQL, AttrResult) && AttrResult.RowCount > 0) {
-        AttrID := AttrResult.Rows[1][2]  ; 获取 ID 字段（TEXT）
-        ; AddDebugLog("找到现有属性 ID: " . AttrID)
-    } else {
-        ; AddDebugLog("未找到现有属性, 准备插入新属性")
-        ; 插入时包含格式字段
-        if (DataFormat != "") {
-            InsertAttrSQL := "INSERT OR IGNORE INTO 关联属性表 (属性类型, 属性值, 类型) VALUES ('" . EscapedAttrFormat . "', '" . EscapedAttrValue . "', '" . EscapedDataFormat . "');"
-        } else {
-            InsertAttrSQL := "INSERT OR IGNORE INTO 关联属性表 (属性类型, 属性值) VALUES ('" . EscapedAttrFormat . "', '" . EscapedAttrValue . "');"
-        }
-        
-        RetryCount := 5
-        Success := false
-        while (RetryCount > 0) {
-            if (SQLiteDB.Exec(InsertAttrSQL)) {
-                Success := true
-                ; AddDebugLog("插入关联属性表成功")
-                break
-            }
-            ErrorMsg := SQLiteDB._ErrMsg()
-            ; AddDebugLog("插入关联属性表失败 (重试 " . (6-RetryCount) . "): " . ErrorMsg)
-            if (InStr(ErrorMsg, "SQLITE_BUSY")) {
-                Sleep, 200
-                RetryCount--
-                continue
-            }
-            Result.ErrorMsg := "ERROR_202548: 插入关联属性表失败: " . ErrorMsg
-            Return Result
-        }
-        
-        if (!Success) {
-            Result.ErrorMsg := "ERROR_202548: 插入关联属性表失败，超过重试次数"
-            ; AddDebugLog(Result.ErrorMsg)
-            Return Result
-        }
-        
-        ; 获取新插入的 Local_ID 和 ID
-        GetAttrIDSQL := "SELECT Local_ID, ID FROM 关联属性表 WHERE 属性类型 = '" . EscapedAttrFormat . "' AND 属性值 = '" . EscapedAttrValue . "' LIMIT 1;"
-        RetryCount := 5
-        while (RetryCount > 0) {
-            if (SQLiteDB.GetTable(GetAttrIDSQL, AttrResult) && AttrResult.RowCount > 0) {
-                AttrID := AttrResult.Rows[1][2]  ; 获取 ID 字段
-                if (AttrID = "") {
-                    AttrID := AttrResult.Rows[1][1]  ; 如果 ID 为空， fallback 到 Local_ID
-                    ; 更新 ID 字段为 Local_ID 的文本形式
-                    UpdateIDSQL := "UPDATE 关联属性表 SET ID = '" . AttrID . "' WHERE Local_ID = " . AttrResult.Rows[1][1] . ";"
-                    if (!SQLiteDB.Exec(UpdateIDSQL)) {
-                        ErrorMsg := SQLiteDB._ErrMsg()
-                        Result.ErrorMsg := "ERROR_202549: 更新属性 ID 失败: " . ErrorMsg
-                        ; AddDebugLog(Result.ErrorMsg)
-                        Return Result
-                    }
-                    ; AddDebugLog("更新属性 ID 成功: " . AttrID)
-                }
-                ; AddDebugLog("获取新属性 ID: " . AttrID)
-                break
-            }
-            Sleep, 100
-            RetryCount--
-        }
-        
-        if (AttrID = "") {
-            Result.ErrorMsg := "ERROR_202549: 插入后未找到属性 ID，属性类型='" . AttrFormat . "', 属性值='" . AttrValue . "'"
-            ; AddDebugLog(Result.ErrorMsg)
-            Return Result
-        }
-    }
-
-    if (AttrID = "") {
-        Result.ErrorMsg := "ERROR_202549: 无效的属性 ID"
-        ; AddDebugLog(Result.ErrorMsg)
-        Return Result
-    }
-
-    ; 检查属性关联是否已存在（动态PropTableName）
-    EscapedPropTable := StrReplace(PropTableName, "'", "''")
-    CheckExistSQL := "SELECT COUNT(*) FROM [" . EscapedPropTable . "] WHERE 属性ID = '" . StrReplace(AttrID, "'", "''") . "' AND ID = " . DataID . ";"
-    CheckResult := {}
-    ExistingCount := 0
-    
-    if (SQLiteDB.GetTable(CheckExistSQL, CheckResult) && CheckResult.RowCount > 0) {
-        ExistingCount := CheckResult.Rows[1][1]
-        if (ExistingCount > 0) {
-            Result.Success := 1
-            Result.ErrorMsg := "属性关联已存在"
-            Result.AttrID := AttrID
-            ; AddDebugLog("属性关联已存在")
-            Return Result
-        }
-    } else {
-        ErrorMsg := SQLiteDB._ErrMsg()
-        Result.ErrorMsg := "ERROR_3744312: 检查属性关联失败: " . ErrorMsg
-        ; AddDebugLog(Result.ErrorMsg)
-        Return Result
-    }
-    ; AddDebugLog("属性关联不存在, 准备插入")
-
-    ; 插入属性关联时也包含格式字段
-    if (DataFormat != "") {
-        InsertAssocSQL := "INSERT INTO [" . EscapedPropTable . "] (属性ID, ID, 格式) VALUES ('" . StrReplace(AttrID, "'", "''") . "', " . DataID . ", '" . EscapedDataFormat . "');"
-    } else {
-        InsertAssocSQL := "INSERT INTO [" . EscapedPropTable . "] (属性ID, ID) VALUES ('" . StrReplace(AttrID, "'", "''") . "', " . DataID . ");"
-    }
-    
-    RetryCount := 5
-    Success := false
-    while (RetryCount > 0) {
-        if (SQLiteDB.Exec(InsertAssocSQL)) {
-            Success := true
-            ; AddDebugLog("插入属性关联成功")
-            break
-        }
-        ErrorMsg := SQLiteDB._ErrMsg()
-        ; AddDebugLog("插入属性关联失败 (重试 " . (6-RetryCount) . "): " . ErrorMsg)
-        if (InStr(ErrorMsg, "SQLITE_BUSY")) {
-            Sleep, 200
-            RetryCount--
-            continue
-        }
-        Result.ErrorMsg := "2716957: 插入属性关联失败: " . ErrorMsg
-        Return Result
-    }
-    
-    if (!Success) {
-        Result.ErrorMsg := "2720504: 插入属性关联失败，超过重试次数"
-        ; AddDebugLog(Result.ErrorMsg)
-        Return Result
-    }
-
-    Result.Success := 1
-    Result.ErrorMsg := ""
-    Result.AttrID := AttrID
-    ; AddDebugLog("InsertAttribute 完成成功, TableName=" . TableName . ", AttrID=" . AttrID)
-    Return Result
-}
-
-VerifyAllAttributes(DataID, TableName) {
-    Global SQLiteDB
-    
-    AttrCount := 0
-    
-    ; 检查主表是否存在
-    EscapedTableName := StrReplace(TableName, "'", "''")
-    CheckMainTableSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . EscapedTableName . "';"
-    MainTableResult := {}
-    if (!SQLiteDB.GetTable(CheckMainTableSQL, MainTableResult) || MainTableResult.RowCount = 0) {
-        MsgBox, 16, 错误, VerifyAllAttributes: 主表 " . TableName . " 不存在
-        Return -1
-    }
-    
-    ; 检查 DataID 是否存在
-    CheckDataIDSQL := "SELECT ID FROM [" . EscapedTableName . "] WHERE ID = " . DataID . " LIMIT 1;"
-    DataIDResult := {}
-    if (!SQLiteDB.GetTable(CheckDataIDSQL, DataIDResult) || DataIDResult.RowCount = 0) {
-        MsgBox, 16, 错误, VerifyAllAttributes: ID " . DataID . " 在表 " . TableName . " 中不存在
-        Return -1
-    }
-    
-    ; 检查属性关联表是否存在
-    PropTableName := TableName . "_关联属性"
-    CheckPropTableSQL := "SELECT name FROM sqlite_master WHERE type='table' AND name='" . PropTableName . "';"
-    PropTableResult := {}
-    if (!SQLiteDB.GetTable(CheckPropTableSQL, PropTableResult) || PropTableResult.RowCount = 0) {
-        MsgBox, 16, 错误, VerifyAllAttributes: 属性关联表 " . PropTableName . " 不存在
-        Return -1
-    }
-    
-    Return AttrCount
-}
-
-
-ClipboardChangedTip() {
-    CoordMode, Tooltip, Windows
-    MouseGetPos, x, y
-
-    message := "已成功创建数据！"
-
-    Loop, 2 {
-        Tooltip, %message%, x0, y-50
-        Sleep, 100
-        Tooltip
-    }
-    Tooltip, %message%, x0, y-50
-    Sleep, 1500
-    Tooltip
-}
-
-BeginSafeTransaction(context) {
-    Global SQLiteDB, TransactionActive, TransactionOwner
-    if (TransactionActive) {
-        ; AddDebugLog("事务已活跃，上下文: " . TransactionOwner . "，跳过 BEGIN")
-        Return true  ; 允许嵌套，但不额外 BEGIN（SQLite 用 SAVEPOINT）
-    }
-    ; AddDebugLog("执行 BEGIN TRANSACTION")
-    if (!SQLiteDB.Exec("BEGIN TRANSACTION;")) {
-        ErrorMsg := SQLiteDB._ErrMsg()
-        ; AddDebugLog("BEGIN 执行失败: " . ErrorMsg)
-        Return false
-    }
-    TransactionActive := true
-    TransactionOwner := context
-    ; AddDebugLog("事务开始成功，Owner: " . context)
-    Return true
-}
-
-CommitSafeTransaction(context) {
-    Global SQLiteDB, TransactionActive, TransactionOwner
-    if (!TransactionActive) {
-        ; AddDebugLog("无活跃事务，无法 COMMIT")
-        Return false
-    }
-    if (TransactionOwner != context) {
-        ; AddDebugLog("上下文不匹配: 当前 " . TransactionOwner . "，预期 " . context)
-        Return false
-    }
-    ; AddDebugLog("执行 COMMIT")
-    if (!SQLiteDB.Exec("COMMIT;")) {
-        ErrorMsg := SQLiteDB._ErrMsg()
-        ; AddDebugLog("COMMIT 执行失败: " . ErrorMsg)
-        Return false
-    }
-    TransactionActive := false
-    TransactionOwner := ""
-    ; AddDebugLog("事务提交成功")
-    Return true
-}
-
 RollbackSafeTransaction(context) {
     Global SQLiteDB, TransactionActive, TransactionOwner
     if (!TransactionActive) {
